@@ -1,24 +1,29 @@
-// SCENE 4: ADAPTIVE ZERO-TRUST COCKPIT AUTH (ANY 2-OF-3 NORMAL + 3-OF-3 THREAT LOCKDOWN)
+// SCENE 4: ADAPTIVE ZERO-TRUST COCKPIT AUTH + 3D KEY IGNITION & HEADLIGHTS
 window.Scene4Cockpit = {
     blinkCount: 0,
     fpVerified: false,
     pinVerified: false,
     threatLockdown: false, // false = Any 2-of-3 Unlock | true = All 3-of-3 Mandatory
     isUnlocked: false,
-    targetFlipAngle: 0,    // 0 = Closed flat over keyhole, 1.95 rad (~110 deg) = Flipped Open upward
+    keyInserted: false,
+    engineRunning: false,
+    targetFlipAngle: 0,    // 0 = Closed, 1.95 rad = Flipped Open upward
+    targetKeyZ: -0.065,    // -0.065 = Out, -0.016 = Fully inserted into slot
+    targetKeyRotZ: 0,      // 0 = Straight, -Math.PI/2 = Turned 90 deg clockwise
 
     enter: function () {
         if (window.Scene2Loitering) window.Scene2Loitering.cleanup();
+        if (window.CarAudio) window.CarAudio.stopSiren();
         if (window.CarGuard.carGroup) window.CarGuard.carGroup.rotation.y = 0;
 
-        // 1. AUTO-DETECT PRIOR THREAT: Check if we came from Scene 2 (Loitering) or Scene 3 (Break-In)
+        // Auto-detect prior threat from Scene 2 or Scene 3
         const cameFromThreat =
             (window.CarGuard.thiefGroup && window.CarGuard.thiefGroup.visible) ||
             (window.Scene3Breakin?.shardsGroup && window.Scene3Breakin.shardsGroup.visible);
 
         this.threatLockdown = Boolean(cameFromThreat);
 
-        // Clean up external scene objects
+        // Clean up external objects
         if (window.CarGuard.thiefGroup) window.CarGuard.thiefGroup.visible = false;
         if (window.CarGuard.rightWindowMesh) window.CarGuard.rightWindowMesh.visible = true;
         if (window.Scene3Breakin?.shardsGroup) window.Scene3Breakin.shardsGroup.visible = false;
@@ -28,21 +33,23 @@ window.Scene4Cockpit = {
         document.getElementById('loiter-controls')?.classList.add('hidden');
         document.getElementById('telegram-panel')?.classList.remove('alarm-flash');
 
-        // Prevent Right Panel & Calibrate Button overlap at the bottom
         const tgLog = document.getElementById('telegram-log');
         if (tgLog) tgLog.className = 'bg-slate-950/90 rounded-lg p-2 mono text-[10px] text-slate-300 h-20 overflow-y-auto space-y-1 border border-slate-800';
         const calibWidget = document.getElementById('calib-widget');
         if (calibWidget) calibWidget.className = 'fixed bottom-16 left-80 z-30 pointer-events-auto mono text-xs';
 
-        // Switch Main Screen to Cockpit Driver POV
         switchMainPOV('cockpit');
 
-        // Reset all 3 security factors & close the Hinged Flip-Guard
+        // Reset all states, Flip-Guard, 3D Key & Headlights
         this.blinkCount = 0;
         this.fpVerified = false;
         this.pinVerified = false;
         this.isUnlocked = false;
+        this.keyInserted = false;
+        this.engineRunning = false;
         this.targetFlipAngle = 0;
+        this.targetKeyZ = -0.065;
+        this.targetKeyRotZ = 0;
 
         if (window.CarGuard.servoShieldMesh) {
             window.CarGuard.servoShieldMesh.position.set(-0.018, 0.020, -0.008);
@@ -51,10 +58,21 @@ window.Scene4Cockpit = {
         if (window.CarGuard.fingerprintMesh) {
             window.CarGuard.fingerprintMesh.material.color.setHex(0x38bdf8);
         }
+        if (window.CarGuard.keyMesh) {
+            window.CarGuard.keyMesh.visible = false;
+            window.CarGuard.keyMesh.position.set(-0.018, 0, -0.065);
+            window.CarGuard.keyMesh.rotation.set(0, 0, 0);
+        }
+        if (window.CarGuard.headlightsGroup) {
+            window.CarGuard.headlightsGroup.visible = false;
+        }
 
-        // Reset Modal Inputs & Badges
         const modal = document.getElementById('cockpit-auth-modal');
         if (modal) modal.classList.remove('hidden');
+
+        // Ensure the "Insert Key & Start Engine" button container exists inside the modal
+        this.ensureStartButtonUI();
+        document.getElementById('start-engine-box')?.classList.add('hidden');
 
         const pinInput = document.getElementById('pin-input');
         if (pinInput) {
@@ -74,8 +92,6 @@ window.Scene4Cockpit = {
         }
 
         document.getElementById('blinks-readout').innerText = 'BLINKS: 0/2';
-
-        // Update Telemetry cleanly
         document.getElementById('tel-radar').innerText = 'COCKPIT BIOMETRICS';
         document.getElementById('tel-radar').className = 'text-cyan-400 font-semibold';
         document.getElementById('tel-timer').innerText = '00:00 / 05:00';
@@ -84,14 +100,36 @@ window.Scene4Cockpit = {
         this.updateLockdownUI();
     },
 
-    // Toggle between 2-of-3 Normal Mode and 3-of-3 Threat Lockdown Mode (can also be clicked manually in UI)
+    ensureStartButtonUI: function () {
+        const modal = document.getElementById('cockpit-auth-modal');
+        if (!modal || document.getElementById('start-engine-box')) return;
+
+        const box = document.createElement('div');
+        box.id = 'start-engine-box';
+        box.className = 'hidden mt-2.5 pt-2 border-t border-emerald-500/30';
+        box.innerHTML = `
+            <button id="btn-insert-key" onclick="window.Scene4Cockpit.insertKeyAndStart()" class="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-bold text-xs tracking-wide shadow-lg shadow-emerald-900/50 flex items-center justify-center gap-2 transition">
+                <i class="fa-solid fa-key"></i>
+                <span>INSERT 3D KEY & START ENGINE</span>
+            </button>
+        `;
+        modal.appendChild(box);
+    },
+
     toggleLockdownMode: function () {
         this.threatLockdown = !this.threatLockdown;
         this.isUnlocked = false;
+        this.keyInserted = false;
+        this.engineRunning = false;
         this.targetFlipAngle = 0;
-        if (window.CarGuard.servoShieldMesh) {
-            window.CarGuard.servoShieldMesh.rotation.x = 0;
-        }
+        this.targetKeyZ = -0.065;
+        this.targetKeyRotZ = 0;
+
+        if (window.CarGuard.servoShieldMesh) window.CarGuard.servoShieldMesh.rotation.x = 0;
+        if (window.CarGuard.keyMesh) window.CarGuard.keyMesh.visible = false;
+        if (window.CarGuard.headlightsGroup) window.CarGuard.headlightsGroup.visible = false;
+        document.getElementById('start-engine-box')?.classList.add('hidden');
+
         this.updateLockdownUI();
         this.checkUnlockCondition();
     },
@@ -104,14 +142,14 @@ window.Scene4Cockpit = {
             if (this.threatLockdown) {
                 header.innerHTML = `
                     <span class="text-rose-400"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Threat Lockdown Auth</span>
-                    <button onclick="window.Scene4Cockpit.toggleLockdownMode()" title="Click to switch mode" class="mono text-[9px] bg-rose-500/20 text-rose-300 border border-rose-500/50 px-1.5 py-0.5 rounded hover:bg-rose-500/30">
+                    <button onclick="window.Scene4Cockpit.toggleLockdownMode()" class="mono text-[9px] bg-rose-500/20 text-rose-300 border border-rose-500/50 px-1.5 py-0.5 rounded hover:bg-rose-500/30">
                         3-OF-3 MANDATORY
                     </button>
                 `;
             } else {
                 header.innerHTML = `
                     <span class="text-emerald-400"><i class="fa-solid fa-key mr-1"></i> Smart Keyhole Auth</span>
-                    <button onclick="window.Scene4Cockpit.toggleLockdownMode()" title="Click to switch mode" class="mono text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded hover:bg-emerald-500/30">
+                    <button onclick="window.Scene4Cockpit.toggleLockdownMode()" class="mono text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.5 rounded hover:bg-emerald-500/30">
                         ANY 2-OF-3 FAST
                     </button>
                 `;
@@ -123,16 +161,18 @@ window.Scene4Cockpit = {
 
         if (this.threatLockdown) {
             document.getElementById('system-status-text').innerText = 'LOCKDOWN: 3/3 AUTH REQ';
-            logTelegram('🚨 [THREAT LOCKDOWN] Prior intrusion detected! All 3 factors (Blink + Fingerprint + PIN) required.');
+            logTelegram('🚨 [THREAT LOCKDOWN] Prior intrusion detected! All 3 factors required.');
         } else {
             document.getElementById('system-status-text').innerText = 'SMART AUTH: ANY 2/3 REQ';
-            logTelegram('[SMART 2-OF-3] Complete ANY 2 factors (e.g., Blink + Fingerprint, or Fingerprint + PIN 2026) to flip open guard.');
+            logTelegram('[SMART 2-OF-3] Complete ANY 2 factors to flip open guard.');
         }
     },
 
     triggerBlink: function () {
         if (this.blinkCount < 2) {
             this.blinkCount++;
+            window.CarAudio?.playBeep(840, 0.09, 'sine');
+
             const earEl = document.getElementById('ear-readout');
             const blinkEl = document.getElementById('blinks-readout');
             if (earEl) earEl.innerText = 'EAR: 0.14 (BLINK!)';
@@ -156,6 +196,8 @@ window.Scene4Cockpit = {
 
     triggerFingerprint: function () {
         this.fpVerified = true;
+        window.CarAudio?.playBeep(1180, 0.12, 'triangle');
+
         if (window.CarGuard.fingerprintMesh) {
             window.CarGuard.fingerprintMesh.material.color.setHex(0x10b981);
         }
@@ -172,9 +214,11 @@ window.Scene4Cockpit = {
         const val = document.getElementById('pin-input').value.trim();
         if (val === '2026') {
             this.pinVerified = true;
+            window.CarAudio?.playBeep(1320, 0.14, 'sine');
             logTelegram('[FACTOR 3] Cryptographic PIN 2026 verified.');
             this.checkUnlockCondition();
         } else {
+            window.CarAudio?.playBeep(220, 0.25, 'sawtooth');
             logTelegram('❌ [PIN ERROR] Invalid PIN! Enter 2026.');
         }
     },
@@ -189,25 +233,87 @@ window.Scene4Cockpit = {
 
         if (passedFactors >= requiredFactors && !this.isUnlocked) {
             this.isUnlocked = true;
-            this.targetFlipAngle = 1.95; // Flip red hexagonal cover upward ~110 degrees!
+            this.targetFlipAngle = 1.95; // Flip red cover upward ~110 degrees!
+            window.CarAudio?.playServoWhir();
 
             document.getElementById('tel-shield').innerHTML =
-                `<i class="fa-solid fa-key mr-1"></i>OPEN (${passedFactors}/${requiredFactors} VERIFIED)`;
+                `<i class="fa-solid fa-lock-open mr-1"></i>OPEN (${passedFactors}/${requiredFactors} OK)`;
             document.getElementById('tel-shield').className = 'text-emerald-400 font-bold';
-            document.getElementById('system-status-text').innerText = 'KEYHOLE UNLOCKED';
+            document.getElementById('system-status-text').innerText = 'KEYHOLE GUARD OPEN';
 
-            if (this.threatLockdown) {
-                logTelegram('✅ [LOCKDOWN CLEARED] All 3/3 factors verified! Red Flip-Guard rotated open.');
-            } else {
-                logTelegram(`✅ [FAST ${passedFactors}/3 AUTH] Biometric threshold met without friction! Flip-Guard opened.`);
+            // Reveal the "Insert 3D Key & Start Engine" button!
+            const startBox = document.getElementById('start-engine-box');
+            const startBtn = document.getElementById('btn-insert-key');
+            if (startBox) startBox.classList.remove('hidden');
+            if (startBtn) {
+                startBtn.disabled = false;
+                startBtn.innerHTML = '<i class="fa-solid fa-key"></i><span>INSERT 3D KEY & START ENGINE</span>';
             }
+
+            logTelegram(`✅ [SERVO ACTUATOR] ${passedFactors}/${requiredFactors} factors verified! Flip-Guard opened. Ready for Key.`);
         }
     },
 
+    insertKeyAndStart: function () {
+        if (!this.isUnlocked || this.keyInserted) return;
+        this.keyInserted = true;
+
+        if (window.CarGuard.keyMesh) {
+            window.CarGuard.keyMesh.visible = true;
+            window.CarGuard.keyMesh.position.set(-0.018, 0, -0.065);
+            window.CarGuard.keyMesh.rotation.set(0, 0, 0);
+        }
+
+        // Slide key into slot
+        this.targetKeyZ = -0.016;
+        window.CarAudio?.playEngineStart();
+
+        const startBtn = document.getElementById('btn-insert-key');
+        if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.innerHTML = '<i class="fa-solid fa-bolt text-amber-300 animate-pulse"></i><span>CRANKING V8 ENGINE...</span>';
+        }
+
+        // After key slides in (400ms), rotate key 90 degrees & turn on 3D Headlights!
+        setTimeout(() => {
+            this.targetKeyRotZ = -Math.PI / 2;
+        }, 380);
+
+        setTimeout(() => {
+            this.engineRunning = true;
+            if (window.CarGuard.headlightsGroup) {
+                window.CarGuard.headlightsGroup.visible = true;
+            }
+            document.getElementById('status-dot').className = 'w-3 h-3 rounded-full bg-cyan-400 animate-ping';
+            document.getElementById('system-status-text').innerText = 'ENGINE RUNNING (V8 ON)';
+            document.getElementById('tel-shield').innerHTML = '<i class="fa-solid fa-car-on mr-1"></i>IGNITION ACTIVE';
+
+            if (startBtn) {
+                startBtn.innerHTML = '<i class="fa-solid fa-circle-check text-emerald-200"></i><span>ENGINE RUNNING (VIEW EXTERIOR)</span>';
+                startBtn.disabled = false;
+                startBtn.onclick = function () {
+                    switchMainPOV('orbit');
+                };
+            }
+
+            logTelegram('🔥 [IGNITION ON] 3D Key turned 90°! Engine started & Front LED Headlights activated.');
+        }, 680);
+    },
+
     update: function () {
+        // 1. Smoothly rotate Hinged Flip-Guard
         if (window.CarGuard.servoShieldMesh) {
             const currentRot = window.CarGuard.servoShieldMesh.rotation.x;
             window.CarGuard.servoShieldMesh.rotation.x += (this.targetFlipAngle - currentRot) * 0.10;
         }
+
+        // 2. Smoothly slide 3D Key into keyhole & rotate 90 deg
+        if (this.keyInserted && window.CarGuard.keyMesh) {
+            const kz = window.CarGuard.keyMesh.position.z;
+            window.CarGuard.keyMesh.position.z += (this.targetKeyZ - kz) * 0.14;
+
+            const kr = window.CarGuard.keyMesh.rotation.z;
+            window.CarGuard.keyMesh.rotation.z += (this.targetKeyRotZ - kr) * 0.12;
+        }
     }
-};ffffff
+};

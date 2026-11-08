@@ -1,4 +1,4 @@
-// SCENE 3: BREAK-IN & SOS ALARM (3D GLASS SHATTER PHYSICS + SIREN + TELEGRAM SOS)
+// SCENE 3: BREAK-IN & SOS ALARM (3D GLASS SHATTER PHYSICS + SIREN AUDIO + TELEGRAM SOS)
 window.Scene3Breakin = {
     shardsGroup: null,
     shards: [],
@@ -6,7 +6,6 @@ window.Scene3Breakin = {
     sirenTick: 0,
 
     initPhysicsObjects: function (scene) {
-        // Create 35 3D Glass Shards for shatter physics
         this.shardsGroup = new THREE.Group();
         this.shardsGroup.visible = false;
         scene.add(this.shardsGroup);
@@ -40,28 +39,31 @@ window.Scene3Breakin = {
         if (window.Scene2Loitering) window.Scene2Loitering.cleanup();
         if (window.CarGuard.carGroup) window.CarGuard.carGroup.rotation.y = 0;
 
-        // Setup lazy physics objects if not created yet
         if (!this.shardsGroup) this.initPhysicsObjects(scene);
 
-        // Hide intact right window and spawn exploding 3D glass shards
+        // Trigger Web Audio Glass Shatter + Police Siren!
+        window.CarAudio?.playGlassShatter();
+        window.CarAudio?.startSiren();
+
+        // Hide intact right window and spawn exploding 3D glass shards at Front Right Window (Z = 0.40)
         if (window.CarGuard.rightWindowMesh) window.CarGuard.rightWindowMesh.visible = false;
         this.shardsGroup.visible = true;
 
         this.shards.forEach(s => {
             s.mesh.position.set(
-                0.98 + (Math.random() - 0.5) * 0.15,
-                1.2 + Math.random() * 0.45,
-                (Math.random() - 0.5) * 1.4
+                0.82 + (Math.random() - 0.5) * 0.15,
+                1.05 + Math.random() * 0.35,
+                0.40 + (Math.random() - 0.5) * 0.75
             );
-            s.vx = (Math.random() - 0.3) * 0.045;
+            s.vx = (Math.random() - 0.25) * 0.045;
             s.vy = 0.02 + Math.random() * 0.03;
             s.vz = (Math.random() - 0.5) * 0.04;
         });
 
-        // Position suspect right next to broken window
+        // Position suspect right next to broken Front Right Window (Z = 0.40)
         if (window.CarGuard.thiefGroup) {
             window.CarGuard.thiefGroup.visible = true;
-            window.CarGuard.thiefGroup.position.set(1.55, 0, 0.15);
+            window.CarGuard.thiefGroup.position.set(1.55, 0, 0.40);
         }
 
         document.getElementById('cam1-bbox')?.classList.remove('hidden');
@@ -69,7 +71,7 @@ window.Scene3Breakin = {
         document.getElementById('cockpit-auth-modal')?.classList.add('hidden');
         document.getElementById('telegram-panel')?.classList.add('alarm-flash');
 
-        // Turn Both Cross-Cabin Cones Crimson Red
+        // Turn All Cones Crimson Red during Break-In
         window.CarGuard.fovCones.forEach(c => c.material.color.setHex(0xef4444));
 
         // Update Telemetry UI
@@ -88,11 +90,10 @@ window.Scene3Breakin = {
     },
 
     update: function () {
-        // 1. Update falling 3D Glass Shards physics
         if (this.shardsGroup && this.shardsGroup.visible) {
             this.shards.forEach(s => {
                 if (s.mesh.position.y > 0.06) {
-                    s.vy -= 0.0028; // Gravity
+                    s.vy -= 0.0028;
                     s.mesh.position.x += s.vx;
                     s.mesh.position.y += s.vy;
                     s.mesh.position.z += s.vz;
@@ -104,7 +105,6 @@ window.Scene3Breakin = {
             });
         }
 
-        // 2. Red / Blue Police Siren Strobe Effect
         if (this.sirenLight) {
             this.sirenTick += 0.18;
             this.sirenLight.intensity = 2.8;

@@ -7,6 +7,7 @@ window.Scene2Loitering = {
 
     enter: function () {
         this.cleanup();
+        window.CarAudio?.stopSiren();
         if (window.CarGuard.carGroup) window.CarGuard.carGroup.rotation.y = 0;
 
         // Restore window if coming from Scene 3
@@ -14,10 +15,10 @@ window.Scene2Loitering = {
         if (window.Scene3Breakin?.shardsGroup) window.Scene3Breakin.shardsGroup.visible = false;
         if (window.Scene3Breakin?.sirenLight) window.Scene3Breakin.sirenLight.intensity = 0;
 
-        // Show 3D Suspect outside Front Right Driver Window (Z = +0.38) & CAM-01 Red YOLO Bounding Box
+        // Show 3D Suspect outside Front Right Driver Window (Z = +0.40) & CAM-01 Red YOLO Bounding Box
         if (window.CarGuard.thiefGroup) {
             window.CarGuard.thiefGroup.visible = true;
-            window.CarGuard.thiefGroup.position.set(1.95, 0, 0.38);
+            window.CarGuard.thiefGroup.position.set(1.95, 0, 0.40);
         }
         document.getElementById('cam1-bbox')?.classList.remove('hidden');
         document.getElementById('loiter-controls')?.classList.remove('hidden');
@@ -69,10 +70,9 @@ window.Scene2Loitering = {
     },
 
     update: function () {
-        // Subtle pacing motion of the suspect outside the Front Right Window (Z = +0.38)
         if (window.CarGuard.thiefGroup && window.CarGuard.thiefGroup.visible) {
             this.walkAngle += 0.035;
-            window.CarGuard.thiefGroup.position.z = 0.38 + Math.sin(this.walkAngle) * 0.28;
+            window.CarGuard.thiefGroup.position.z = 0.40 + Math.sin(this.walkAngle) * 0.28;
             window.CarGuard.thiefGroup.rotation.y = Math.cos(this.walkAngle) * 0.25;
         }
     },
