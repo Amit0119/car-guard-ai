@@ -3,6 +3,9 @@ let activeMainPOV = 'orbit';
 let currentSceneController = null;
 let realWebcamActive = false;
 
+// Backend Flask Server URL for Silent WhatsApp Alerts
+const WHATSAPP_API_URL = 'http://127.0.0.1:5000/api/whatsapp-alert';
+
 function initSimulation() {
     const container = document.getElementById('canvas-container');
 
@@ -13,7 +16,12 @@ function initSimulation() {
     mainCamera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 200);
     mainCamera.position.set(4.8, 3.4, 5.2);
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    // preserveDrawingBuffer: true is required to capture 3D CCTV snapshots for WhatsApp!
+    renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        powerPreference: 'high-performance',
+        preserveDrawingBuffer: true
+    });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
@@ -43,6 +51,11 @@ function initSimulation() {
 
     // Start in Scene 1: Standby Surveillance
     setSimulationScene('standby');
+
+    // Pre-warm Browser Geolocation permission on load so SOS alerts don't get stuck waiting for popup
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(() => {}, () => {}, { timeout: 3000 });
+    }
 
     window.addEventListener('resize', onWindowResize);
     animate();
@@ -154,12 +167,15 @@ async function toggleRealWebcam() {
     const btn = document.getElementById('webcam-btn');
     if (!realWebcamActive) {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: 640, height: 480, facingMode: 'user' }
+            });
             videoEl.srcObject = stream;
+            await videoEl.play();
             videoEl.classList.remove('hidden');
             realWebcamActive = true;
             btn.innerHTML = '<i class="fa-solid fa-cube"></i> 3D Cam';
-            logTelegram('[CAM-03] Connected to real laptop webcam for live EAR blink tracking.');
+            appendRawLog('<span class="text-cyan-400">[CAM-03] Connected to physical laptop webcam (Live Snapshot Active).</span>');
         } catch (err) {
             alert('Webcam permission denied or unavailable.');
         }
@@ -191,13 +207,99 @@ function setSimulationScene(mode) {
     }
 }
 
-function logTelegram(msg) {
+// Captures Instant Frame (Real Laptop Webcam OR 3D Simulation Canvas) + Live Browser GPS
+async function dispatchWhatsAppSOS(title, details) {
+    try {
+        let snapshotBase64 = null;
+        let photoSource = '3D CCTV Simulation';
+        const videoEl = document.getElementById('real-webcam');
+
+        // 1. CAPTURE PHOTO IMMEDIATELY BEFORE AWAITING GPS
+        if (realWebcamActive && videoEl && videoEl.readyState >= 2) {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = videoEl.videoWidth || 640;
+            tempCanvas.height = videoEl.videoHeight || 480;
+            const ctx = tempCanvas.getContext('2d');
+            ctx.drawImage(videoEl, 0, 0, tempCanvas.width, tempCanvas.height);
+            snapshotBase64 = tempCanvas.toDataURL('image/jpeg', 0.85);
+            photoSource = 'Physical Laptop Webcam';
+        } else if (renderer && renderer.domElement) {
+            snapshotBase64 = renderer.domElement.toDataURL('image/jpeg', 0.82);
+        }
+
+        // 2. FETCH LIVE BROWSER GPS COORDINATES (Fallback to Bareilly if blocked)
+        let lat = 28.3670;
+        let lon = 79.4304;
+        let gpsSource = 'Default Bareilly Fallback';
+
+        if (navigator.geolocation) {
+            try {
+                const position = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, {
+                        enableHighAccuracy: true,
+                        timeout: 3500,
+                        maximumAge: 60000
+                    });
+                });
+                lat = Number(position.coords.latitude.toFixed(6));
+                lon = Number(position.coords.longitude.toFixed(6));
+                gpsSource = `Live Browser GPS (${lat}, ${lon})`;
+            } catch (geoErr) {
+                console.warn('Live GPS unavailable, using default coordinates.');
+            }
+        }
+
+        // 3. DISPATCH TO PYTHON FLASK SERVER
+        const res = await fetch(WHATSAPP_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: title,
+                details: `${details} [Source: ${photoSource}]`,
+                image: snapshotBase64,
+                lat: lat,
+                lon: lon
+            })
+        });
+
+        if (res.ok) {
+            appendRawLog(`<span class="text-emerald-400 font-bold">📲 [WHATSAPP SENT] ${photoSource} + ${gpsSource} delivered!</span>`);
+        } else {
+            appendRawLog('<span class="text-amber-400">⚠️ [WHATSAPP API] Check Green-API instance status.</span>');
+        }
+    } catch (err) {
+        appendRawLog('<span class="text-amber-400">⚠️ [BACKEND OFFLINE] Run "python backend/server.py" to send WhatsApp alerts.</span>');
+    }
+}
+
+function appendRawLog(htmlMsg) {
     const box = document.getElementById('telegram-log');
     if (!box) return;
     const div = document.createElement('div');
     const time = new Date().toTimeString().split(' ')[0];
-    div.innerHTML = `<span class="text-slate-500">[${time}]</span> ${msg}`;
+    div.innerHTML = `<span class="text-slate-500">[${time}]</span> ${htmlMsg}`;
     box.prepend(div);
+}
+
+function logTelegram(msg) {
+    appendRawLog(msg);
+
+    // Auto-trigger real WhatsApp alert on Scene 2 (5-Min Loitering) or Scene 3 (Break-In SOS)
+    if (msg.includes('[PRE-EMPTIVE ALERT]')) {
+        setTimeout(() => {
+            dispatchWhatsAppSOS(
+                'PRE-EMPTIVE LOITERING ALERT (5 MIN)',
+                'YOLOv8 tracked suspect outside Front Right Door for >5 minutes (CAM-01).'
+            );
+        }, 250);
+    } else if (msg.includes('[TELEGRAM SOS]')) {
+        setTimeout(() => {
+            dispatchWhatsAppSOS(
+                'CRITICAL BREAK-IN & GLASS SHATTER SOS',
+                'Piezo sensor detected 940 Hz Right Window shatter! Immediate intrusion locked on CAM-01.'
+            );
+        }, 250);
+    }
 }
 
 function onWindowResize() {
