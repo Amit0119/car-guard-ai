@@ -2,6 +2,7 @@ import threading
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from telegram_bot import send_whatsapp_alert
+from ear_liveness import process_liveness_frame, enroll_owner_face, reset_liveness_session
 
 app = Flask(__name__)
 CORS(app)
@@ -12,8 +13,7 @@ CORS(app)
 def health():
     return jsonify({
         "status": "online",
-        "service": "Car-Guard-AI WhatsApp Engine (Instance 710722796073)",
-        "endpoint": "/api/whatsapp-alert"
+        "service": "Car-Guard-AI Backend (WhatsApp SOS + MediaPipe Owner Face/EAR Engine)"
     })
 
 
@@ -23,8 +23,6 @@ def trigger_alert():
     event_title = data.get("title", "SECURITY BREACH DETECTED")
     details = data.get("details", "Suspicious activity around vehicle.")
     image_base64 = data.get("image", None)
-
-    # Receive live browser GPS coordinates from core.js
     lat = data.get("lat", 28.3670)
     lon = data.get("lon", 79.4304)
 
@@ -39,6 +37,34 @@ def trigger_alert():
         "ok": True,
         "message": "WhatsApp SOS, Snapshot & Live GPS dispatched!"
     })
+
+
+@app.route("/api/liveness-check", methods=["POST"])
+def liveness_check():
+    data = request.get_json(force=True) or {}
+    image_base64 = data.get("image", None)
+    if not image_base64:
+        return jsonify({"ok": False, "error": "No webcam frame provided"}), 400
+
+    result = process_liveness_frame(image_base64)
+    return jsonify(result)
+
+
+@app.route("/api/enroll-owner", methods=["POST"])
+def enroll_owner():
+    data = request.get_json(force=True) or {}
+    image_base64 = data.get("image", None)
+    if not image_base64:
+        return jsonify({"ok": False, "message": "No webcam frame provided"}), 400
+
+    result = enroll_owner_face(image_base64)
+    return jsonify(result)
+
+
+@app.route("/api/reset-liveness", methods=["POST"])
+def reset_liveness():
+    reset_liveness_session()
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
