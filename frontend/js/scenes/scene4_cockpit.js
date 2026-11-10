@@ -1,4 +1,4 @@
-// SCENE 4: STRICT ZERO-TRUST COCKPIT AUTH (REAL CAM OWNER FACE + 2 BLINKS + 1.5s HOLD FINGERPRINT + PIN)
+// SCENE 4: ZERO-TRUST COCKPIT HMI (PROTECTED FACE ENROLLMENT + 2-BLINK LIVENESS + 1.5s HOLD FINGERPRINT + PASSCODE)
 window.Scene4Cockpit = {
     blinkVerified: false,
     fingerVerified: false,
@@ -9,13 +9,11 @@ window.Scene4Cockpit = {
     keyTurning: false,
     targetShieldAngle: 0,
 
-    // Live Webcam Liveness Polling State
     livenessPollId: null,
     pollBusy: false,
     intruderFrames: 0,
     intruderAlertSent: false,
 
-    // 1.5s Press & Hold Fingerprint State
     fpHoldInterval: null,
     fpHoldProgress: 0,
 
@@ -44,7 +42,6 @@ window.Scene4Cockpit = {
         const modal = document.getElementById('cockpit-auth-modal');
         if (modal) modal.classList.remove('hidden');
 
-        // Reset all auth states & 3D objects
         this.blinkVerified = false;
         this.fingerVerified = false;
         this.pinVerified = false;
@@ -83,20 +80,34 @@ window.Scene4Cockpit = {
         document.getElementById('status-dot').className = 'w-3 h-3 rounded-full bg-cyan-400 animate-ping';
         document.getElementById('system-status-text').innerText = this.priorThreatDetected
             ? 'COCKPIT: 3-OF-3 HIGH-ALERT LOCK'
-            : 'COCKPIT: 2-OF-3 FAST AUTH';
+            : 'COCKPIT: 2-OF-3 ADAPTIVE AUTH';
         document.getElementById('system-badge').className = 'flex items-center space-x-1.5 text-cyan-400 font-semibold';
 
-        document.getElementById('tel-shield').innerHTML = '<i class="fa-solid fa-lock mr-1"></i>FLIP-GUARD LOCKED';
+        document.getElementById('tel-shield').innerHTML = '<i class="fa-solid fa-lock mr-1"></i>IMMOBILIZER LOCKED';
         document.getElementById('tel-shield').className = 'text-amber-400 font-semibold';
 
         fetch('http://127.0.0.1:5000/api/reset-liveness', { method: 'POST' }).catch(() => {});
         this.startLivenessPolling();
 
         if (this.priorThreatDetected) {
-            logTelegram('⚠️ [HIGH-ALERT MODE] Prior threat recorded! All 3 Factors (3-of-3) required.');
+            logTelegram('⚠️ [HIGH-ALERT PROTOCOL] Prior perimeter breach logged. All 3 factors (3-of-3) required.');
         } else {
-            logTelegram('⚡ [FAST-AUTH MODE] Normal entry: Complete ANY 2 of 3 checks to flip open Keyhole Guard.');
+            logTelegram('⚡ [ADAPTIVE AUTH] Standard entry: Verify any 2 of 3 factors to disengage immobilizer.');
         }
+    },
+
+    showInlineNotice: function (message, tone = 'amber') {
+        const box = document.getElementById('cockpit-inline-notice');
+        if (!box) return;
+
+        const palette = {
+            amber: 'bg-amber-500/15 border-amber-500/50 text-amber-300',
+            rose: 'bg-rose-500/20 border-rose-500/60 text-rose-300',
+            emerald: 'bg-emerald-500/15 border-emerald-500/50 text-emerald-300'
+        };
+        box.className = `mb-2 px-2.5 py-1.5 rounded-lg border text-[10px] font-semibold mono flex items-center justify-between ${palette[tone] || palette.amber}`;
+        box.innerHTML = `<span>${message}</span>`;
+        box.classList.remove('hidden');
     },
 
     injectUpgradedAuthUI: function () {
@@ -106,11 +117,11 @@ window.Scene4Cockpit = {
         const modeBanner = this.priorThreatDetected
             ? `<div class="mb-2 px-2.5 py-1 rounded bg-rose-500/20 border border-rose-500/50 text-[10px] text-rose-300 font-semibold flex items-center justify-between">
                    <span><i class="fa-solid fa-triangle-exclamation mr-1"></i>HIGH-ALERT: 3-OF-3 REQUIRED</span>
-                   <span class="mono">STRICT LOCK</span>
+                   <span class="mono">STRICT MFA</span>
                </div>`
             : `<div class="mb-2 px-2.5 py-1 rounded bg-cyan-500/15 border border-cyan-500/40 text-[10px] text-cyan-300 font-semibold flex items-center justify-between">
-                   <span><i class="fa-solid fa-bolt mr-1"></i>FAST AUTH: ANY 2-OF-3 UNLOCKS</span>
-                   <span class="mono">0 / 2 DONE</span>
+                   <span><i class="fa-solid fa-bolt mr-1"></i>ADAPTIVE AUTH: ANY 2-OF-3 UNLOCKS</span>
+                   <span class="mono">0 / 2 VERIFIED</span>
                </div>`;
 
         modal.innerHTML = `
@@ -118,35 +129,36 @@ window.Scene4Cockpit = {
                 <div class="flex items-center justify-between border-b border-slate-800 pb-2 mb-2">
                     <div class="flex items-center space-x-2">
                         <i class="fa-solid fa-shield-halved text-cyan-400"></i>
-                        <span class="font-bold tracking-wider text-white">ZERO-TRUST COCKPIT ENGINE</span>
+                        <span class="font-bold tracking-wider text-white">ZERO-TRUST COCKPIT HMI</span>
                     </div>
-                    <button onclick="window.Scene4Cockpit.enrollOwnerFace()" class="px-2 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/40 border border-cyan-400/50 text-[10px] text-cyan-200 mono" title="Save current webcam face as Owner (Amit)">
-                        <i class="fa-solid fa-user-lock mr-1"></i>Register My Face
+                    <button id="btn-enroll-face" onclick="window.Scene4Cockpit.enrollOwnerFace()" class="px-2 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/40 border border-cyan-400/50 text-[10px] text-cyan-200 mono" title="Requires existing Owner Face match or Passcode to overwrite">
+                        <i class="fa-solid fa-id-badge mr-1"></i><span id="btn-enroll-label">Enroll Biometrics</span>
                     </button>
                 </div>
 
                 <div id="auth-mode-banner">${modeBanner}</div>
+                <div id="cockpit-inline-notice" class="hidden"></div>
 
                 <div class="space-y-2">
-                    <!-- FACTOR 1: STRICT REAL WEBCAM FACE LOCK + 2 EYE-BLINKS -->
+                    <!-- FACTOR 1: OPTICAL FACE ID + LIVENESS -->
                     <div class="p-2 rounded-lg bg-slate-900/90 border border-slate-800">
                         <div class="flex items-center justify-between">
                             <div>
-                                <div class="font-semibold text-slate-200">1. Owner Face + 2 Eye-Blinks</div>
-                                <div id="live-ear-status" class="text-[10px] text-amber-400 mono">Turn ON "Use Real Cam" to scan face</div>
+                                <div class="font-semibold text-slate-200">1. Optical Face ID & Liveness</div>
+                                <div id="live-ear-status" class="text-[10px] text-amber-400 mono">Enable "Use Real Cam" on CAM-03</div>
                             </div>
                             <span id="badge-auth-blink" class="px-2.5 py-1 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-semibold mono">
-                                <i class="fa-solid fa-video-slash mr-1"></i>Cam Off
+                                <i class="fa-solid fa-video-slash mr-1"></i>Standby
                             </span>
                         </div>
                     </div>
 
-                    <!-- FACTOR 2: 1.5s PRESS & HOLD CAPACITIVE FINGERPRINT -->
+                    <!-- FACTOR 2: 1.5s CAPACITIVE BIOMETRIC SENSOR -->
                     <div class="p-2 rounded-lg bg-slate-900/90 border border-slate-800">
                         <div class="flex items-center justify-between mb-1">
                             <div>
-                                <div class="font-semibold text-slate-200">2. Capacitive Fingerprint</div>
-                                <div id="fp-status-lbl" class="text-[10px] text-slate-400 mono">Press & Hold for 1.5s to scan</div>
+                                <div class="font-semibold text-slate-200">2. Capacitive Fingerprint Sensor</div>
+                                <div id="fp-status-lbl" class="text-[10px] text-slate-400 mono">Press & Hold 1.5s to authenticate</div>
                             </div>
                             <button id="btn-auth-finger"
                                 onmousedown="window.Scene4Cockpit.startFingerprintHold()"
@@ -155,7 +167,7 @@ window.Scene4Cockpit = {
                                 ontouchstart="window.Scene4Cockpit.startFingerprintHold(); event.preventDefault();"
                                 ontouchend="window.Scene4Cockpit.cancelFingerprintHold()"
                                 class="px-2.5 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 border border-cyan-500/40 text-[10px] font-semibold select-none">
-                                Hold 1.5s Scan
+                                Hold 1.5s
                             </button>
                         </div>
                         <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
@@ -163,14 +175,14 @@ window.Scene4Cockpit = {
                         </div>
                     </div>
 
-                    <!-- FACTOR 3: FALLBACK SECURITY PIN -->
+                    <!-- FACTOR 3: CRYPTOGRAPHIC PASSCODE -->
                     <div class="p-2 rounded-lg bg-slate-900/90 border border-slate-800 flex items-center justify-between">
                         <div>
-                            <div class="font-semibold text-slate-200">3. Security PIN (2026)</div>
-                            <div class="text-[10px] text-slate-400">2-of-3 backup if camera/sensor dark</div>
+                            <div class="font-semibold text-slate-200">3. Cryptographic Passcode</div>
+                            <div class="text-[10px] text-slate-400">Secondary ECU key-pad verification</div>
                         </div>
                         <div class="flex items-center space-x-1">
-                            <input id="pin-input" type="password" maxlength="4" placeholder="2026" class="w-14 px-1.5 py-1 rounded bg-slate-950 border border-slate-700 text-center mono text-cyan-300 text-xs focus:outline-none">
+                            <input id="pin-input" type="password" maxlength="4" placeholder="••••" class="w-14 px-1.5 py-1 rounded bg-slate-950 border border-slate-700 text-center mono text-cyan-300 text-xs focus:outline-none">
                             <button id="btn-auth-pin" onclick="window.Scene4Cockpit.verifyPin()" class="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 border border-amber-500/40 text-[10px] font-semibold">
                                 Verify
                             </button>
@@ -178,17 +190,16 @@ window.Scene4Cockpit = {
                     </div>
                 </div>
 
-                <!-- ENGINE START BUTTON -->
+                <!-- IGNITION SYSTEM BUTTON -->
                 <div id="start-engine-box" class="hidden mt-2.5 pt-2 border-t border-slate-800">
                     <button id="btn-start-engine" onclick="window.Scene4Cockpit.igniteEngine()" class="w-full py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-black tracking-wider text-xs shadow-lg hover:brightness-110">
-                        <i class="fa-solid fa-key mr-1"></i> INSERT 3D KEY & IGNITE ENGINE
+                        <i class="fa-solid fa-power-off mr-1.5"></i> ENGAGE IGNITION SYSTEM
                     </button>
                 </div>
             </div>
         `;
     },
 
-    // --- 1. STRICT REAL WEBCAM OWNER FACE + 2 EYE-BLINKS POLLING ---
     startLivenessPolling: function () {
         this.stopLivenessPolling();
         this.livenessPollId = setInterval(() => {
@@ -217,26 +228,44 @@ window.Scene4Cockpit = {
     enrollOwnerFace: async function () {
         const frame = this.captureWebcamBase64();
         if (!frame) {
-            alert('Pehle left panel mein "Use Real Cam" button daba kar laptop camera ON kar!');
+            window.CarAudio?.playBeep(280, 0.2, 'sawtooth');
+            this.showInlineNotice('OPTICAL SENSOR OFFLINE: Enable "Use Real Cam" in CAM-03 first.', 'amber');
             return;
         }
+
+        const enteredPin = document.getElementById('pin-input')?.value.trim() || '';
+        const authPin = this.pinVerified ? '2026' : enteredPin;
+
         try {
             const res = await fetch('http://127.0.0.1:5000/api/enroll-owner', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image: frame })
+                body: JSON.stringify({ image: frame, pin: authPin })
             });
             const data = await res.json();
+
             if (data.ok) {
                 window.CarAudio?.playBeep(1250, 0.16, 'sine');
-                logTelegram(`✅ [FACE LOCK ENROLLED] ${data.message}`);
-                const lbl = document.getElementById('live-ear-status');
-                if (lbl) lbl.innerText = 'FACE LOCKED! Blink 2 times in camera...';
+                this.showInlineNotice(data.message, 'emerald');
+                logTelegram(`✅ [BIOMETRIC VAULT] ${data.message}`);
+                const btnLbl = document.getElementById('btn-enroll-label');
+                if (btnLbl) btnLbl.innerText = 'ID Locked (Update)';
+            } else if (data.code === 'UNAUTHORIZED_OVERWRITE') {
+                window.CarAudio?.playBeep(240, 0.35, 'sawtooth');
+                this.showInlineNotice(data.message, 'rose');
+                logTelegram(`🚨 [SECURITY VIOLATION] Unauthorized attempt to overwrite Owner Biometric ID (${data.match_confidence}% match)!`);
+                if (typeof dispatchWhatsAppSOS === 'function') {
+                    dispatchWhatsAppSOS(
+                        'UNAUTHORIZED BIOMETRIC OVERWRITE ATTEMPT',
+                        `Unrecognized individual (${data.match_confidence}% match) attempted to overwrite Owner Face ID on CAM-03.`
+                    );
+                }
             } else {
-                alert(data.message || 'Face enrollment failed.');
+                window.CarAudio?.playBeep(280, 0.2, 'sawtooth');
+                this.showInlineNotice(data.message || 'Biometric enrollment failed.', 'amber');
             }
         } catch (err) {
-            alert('Backend server offline! Run: python backend/server.py');
+            this.showInlineNotice('TELEMETRY SERVER OFFLINE: Start backend service on port 5000.', 'rose');
         }
     },
 
@@ -246,15 +275,14 @@ window.Scene4Cockpit = {
         const lbl = document.getElementById('live-ear-status');
         const badge = document.getElementById('badge-auth-blink');
 
-        // Strictly block verification if 3D Cam is active (Real Webcam OFF)
         const frame = this.captureWebcamBase64();
         if (!frame) {
             if (lbl) {
-                lbl.innerText = 'REAL CAM OFF — Turn on "Use Real Cam"';
+                lbl.innerText = 'OPTICAL FEED STANDBY — Enable "Use Real Cam"';
                 lbl.className = 'text-[10px] text-amber-400 mono';
             }
             if (badge) {
-                badge.innerHTML = '<i class="fa-solid fa-video-slash mr-1"></i>Cam Off';
+                badge.innerHTML = '<i class="fa-solid fa-video-slash mr-1"></i>Standby';
                 badge.className = 'px-2.5 py-1 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-semibold mono';
             }
             return;
@@ -272,10 +300,14 @@ window.Scene4Cockpit = {
             if (data.ok && lbl) {
                 lbl.innerText = data.status_text;
 
-                // Update Left Panel CAM-03 Telemetry
+                const btnLbl = document.getElementById('btn-enroll-label');
+                if (btnLbl && data.owner_enrolled) {
+                    btnLbl.innerText = 'ID Locked (Update)';
+                }
+
                 const earEl = document.getElementById('ear-val');
                 const blinkEl = document.getElementById('blink-count');
-                if (earEl) earEl.innerText = data.face_detected ? `${data.ear} (${data.ear < 0.20 ? 'BLINK' : 'OPEN'})` : 'NO FACE';
+                if (earEl) earEl.innerText = data.face_detected ? `${data.ear} (${data.ear < 0.20 ? 'CLOSED' : 'OPEN'})` : 'NO FACE';
                 if (blinkEl) blinkEl.innerText = `${data.blink_count}/2`;
 
                 if (!data.face_detected) {
@@ -287,18 +319,18 @@ window.Scene4Cockpit = {
                 } else if (!data.is_owner) {
                     lbl.className = 'text-[10px] text-rose-400 font-bold mono animate-pulse';
                     if (badge) {
-                        badge.innerHTML = '<i class="fa-solid fa-xmark mr-1"></i>Intruder';
+                        badge.innerHTML = '<i class="fa-solid fa-xmark mr-1"></i>Denied';
                         badge.className = 'px-2.5 py-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold mono';
                     }
                     this.intruderFrames++;
                     if (this.intruderFrames >= 12 && !this.intruderAlertSent) {
                         this.intruderAlertSent = true;
                         window.CarAudio?.playBeep(260, 0.35, 'sawtooth');
-                        logTelegram('🚨 [FACE LOCK REJECTED] Unauthorized person in Driver Seat! Sending WhatsApp snapshot...');
+                        logTelegram('🚨 [BIOMETRIC REJECTED] Unrecognized driver in cockpit! Dispatching WhatsApp evidence...');
                         if (typeof dispatchWhatsAppSOS === 'function') {
                             dispatchWhatsAppSOS(
-                                'UNAUTHORIZED DRIVER FACE DETECTED',
-                                `CAM-03 rejected non-owner face (${data.match_confidence}% match). Keyhole Flip-Guard locked!`
+                                'UNAUTHORIZED DRIVER DETECTED IN COCKPIT',
+                                `CAM-03 rejected non-owner facial geometry (${data.match_confidence}% match). Immobilizer locked.`
                             );
                         }
                     }
@@ -306,7 +338,7 @@ window.Scene4Cockpit = {
                     this.intruderFrames = 0;
                     lbl.className = 'text-[10px] text-cyan-300 font-semibold mono';
                     if (badge) {
-                        badge.innerHTML = `Blink ${data.blink_count}/2`;
+                        badge.innerHTML = `Liveness ${data.blink_count}/2`;
                         badge.className = 'px-2.5 py-1 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[10px] font-bold mono';
                     }
                     if (data.liveness_passed && !this.blinkVerified) {
@@ -315,7 +347,7 @@ window.Scene4Cockpit = {
                 }
             }
         } catch (e) {
-            // Ignore when server is offline
+            // Silent ignore when server is unreachable
         } finally {
             this.pollBusy = false;
         }
@@ -333,15 +365,14 @@ window.Scene4Cockpit = {
         }
         const lbl = document.getElementById('live-ear-status');
         if (lbl) {
-            lbl.innerText = `OWNER VERIFIED (Match: ${matchScore}% | 2/2 Blinks)`;
+            lbl.innerText = `BIOMETRIC CONFIRMED (Match: ${matchScore}% | Liveness: 2/2)`;
             lbl.className = 'text-[10px] text-emerald-400 font-bold mono';
         }
 
-        logTelegram(`👁️ [REAL CAM-03] Owner Face (${matchScore}%) + 2 Live Eye-Blinks verified!`);
+        logTelegram(`👁️ [CAM-03 BIOMETRICS] Owner identity (${matchScore}%) & 2-blink liveness verified.`);
         this.checkUnlockCondition();
     },
 
-    // --- 2. 1.5-SECOND PRESS & HOLD CAPACITIVE FINGERPRINT ---
     startFingerprintHold: function () {
         if (this.fingerVerified || this.fpHoldInterval) return;
 
@@ -349,7 +380,7 @@ window.Scene4Cockpit = {
         const bar = document.getElementById('fp-progress-bar');
         const lbl = document.getElementById('fp-status-lbl');
         if (lbl) {
-            lbl.innerText = 'Scanning biometric ridges... Keep holding!';
+            lbl.innerText = 'Scanning dermal ridge topology... Keep holding';
             lbl.className = 'text-[10px] text-cyan-300 font-semibold mono animate-pulse';
         }
 
@@ -381,7 +412,7 @@ window.Scene4Cockpit = {
             const lbl = document.getElementById('fp-status-lbl');
             if (bar) bar.style.width = '0%';
             if (lbl) {
-                lbl.innerText = 'Scan aborted! Hold full 1.5 seconds.';
+                lbl.innerText = 'Scan incomplete — Maintain contact for 1.5s';
                 lbl.className = 'text-[10px] text-amber-400 mono';
             }
             window.CarAudio?.playBeep(300, 0.12, 'sawtooth');
@@ -395,12 +426,12 @@ window.Scene4Cockpit = {
 
         const btn = document.getElementById('btn-auth-finger');
         if (btn) {
-            btn.innerHTML = '<i class="fa-solid fa-check mr-1"></i>Scanned';
+            btn.innerHTML = '<i class="fa-solid fa-check mr-1"></i>Verified';
             btn.className = 'px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold';
         }
         const lbl = document.getElementById('fp-status-lbl');
         if (lbl) {
-            lbl.innerText = '1.5s Capacitive Ridge Match: 99.6%';
+            lbl.innerText = 'Capacitive Ridge Match: 99.6% Confidence';
             lbl.className = 'text-[10px] text-emerald-400 font-bold mono';
         }
         const bar = document.getElementById('fp-progress-bar');
@@ -410,11 +441,10 @@ window.Scene4Cockpit = {
             window.CarGuard.fingerprintMesh.material.color.setHex(0x10b981);
         }
 
-        logTelegram('🧬 [FINGERPRINT] 1.5s Capacitive Hold Scan verified (Match confidence: 99.6%).');
+        logTelegram('🧬 [CAPACITIVE SENSOR] 1.5s dermal ridge scan authenticated (99.6% match).');
         this.checkUnlockCondition();
     },
 
-    // --- 3. FALLBACK SECURITY PIN (2026) ---
     verifyPin: function () {
         if (this.pinVerified) return;
         const val = document.getElementById('pin-input')?.value.trim();
@@ -424,14 +454,16 @@ window.Scene4Cockpit = {
             window.CarAudio?.playBeep(1320, 0.15, 'sine');
             const btn = document.getElementById('btn-auth-pin');
             if (btn) {
-                btn.innerHTML = '<i class="fa-solid fa-check mr-1"></i>PIN OK';
+                btn.innerHTML = '<i class="fa-solid fa-check mr-1"></i>Verified';
                 btn.className = 'px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold';
             }
-            logTelegram('🔢 [PIN VERIFIED] 4-Digit Cryptographic PIN (2026) accepted.');
+            this.showInlineNotice('CRYPTOGRAPHIC PASSCODE ACCEPTED.', 'emerald');
+            logTelegram('🔢 [ECU KEYPAD] Cryptographic passcode authenticated.');
             this.checkUnlockCondition();
         } else {
             window.CarAudio?.playBeep(240, 0.30, 'sawtooth');
-            logTelegram('❌ [PIN ERROR] Invalid PIN entered! Enter 2026.');
+            this.showInlineNotice('ACCESS DENIED: Invalid cryptographic passcode.', 'rose');
+            logTelegram('❌ [ECU KEYPAD] Invalid cryptographic passcode entered.');
         }
     },
 
@@ -446,24 +478,23 @@ window.Scene4Cockpit = {
         const banner = document.getElementById('auth-mode-banner');
         if (banner && !this.priorThreatDetected) {
             banner.innerHTML = `<div class="mb-2 px-2.5 py-1 rounded bg-cyan-500/15 border border-cyan-500/40 text-[10px] text-cyan-300 font-semibold flex items-center justify-between">
-                <span><i class="fa-solid fa-bolt mr-1"></i>FAST AUTH: ANY 2-OF-3 UNLOCKS</span>
-                <span class="mono">${passedCount} / 2 DONE</span>
+                <span><i class="fa-solid fa-bolt mr-1"></i>ADAPTIVE AUTH: ANY 2-OF-3 UNLOCKS</span>
+                <span class="mono">${passedCount} / 2 VERIFIED</span>
             </div>`;
         }
 
         if (passedCount >= requiredCount && !this.shieldUnlocked) {
             this.shieldUnlocked = true;
-            // POSITIVE ANGLE (+Math.PI * 0.62) flips the red Key Safe cover FORWARD & UP towards the driver!
             this.targetShieldAngle = Math.PI * 0.62;
 
             setTimeout(() => window.CarAudio?.playServoWhir(), 180);
 
-            document.getElementById('tel-shield').innerHTML = '<i class="fa-solid fa-lock-open mr-1"></i>FLIP-GUARD OPEN';
+            document.getElementById('tel-shield').innerHTML = '<i class="fa-solid fa-lock-open mr-1"></i>IMMOBILIZER DISENGAGED';
             document.getElementById('tel-shield').className = 'text-emerald-400 font-bold animate-pulse';
 
             document.getElementById('start-engine-box')?.classList.remove('hidden');
 
-            logTelegram(`🔓 [SERVO ACTUATED] ${passedCount}/${requiredCount} factors verified! Hinged Red Keyhole Guard flipped UP.`);
+            logTelegram(`🔓 [SERVO ACTUATOR] ${passedCount}/${requiredCount} factors authenticated. Ignition guard disengaged.`);
         }
     },
 
@@ -488,25 +519,23 @@ window.Scene4Cockpit = {
 
         const startBtn = document.getElementById('btn-start-engine');
         if (startBtn) {
-            startBtn.innerHTML = '<i class="fa-solid fa-fire-flame-curved mr-1"></i> PORSCHE V8 ENGINE RUNNING (HEADLIGHTS ON)';
+            startBtn.innerHTML = '<i class="fa-solid fa-gauge-high mr-1.5"></i> POWERTRAIN ONLINE — DRIVE READY';
             startBtn.className = 'w-full py-2 rounded-xl bg-emerald-500/30 text-emerald-300 border border-emerald-400 font-bold text-xs cursor-default';
         }
 
         document.getElementById('status-dot').className = 'w-3 h-3 rounded-full bg-emerald-400';
-        document.getElementById('system-status-text').innerText = 'AUTHORIZED: ENGINE RUNNING';
+        document.getElementById('system-status-text').innerText = 'POWERTRAIN ONLINE — DRIVE READY';
         document.getElementById('system-badge').className = 'flex items-center space-x-1.5 text-emerald-400 font-bold';
 
-        logTelegram('🚗 [V8 IGNITION] 3D Key inserted & turned 90°! Engine started & Front LED Headlights ON.');
+        logTelegram('🚗 [ECU IGNITION] Immobilizer disengaged. Powertrain & DRL optics online.');
     },
 
     update: function () {
-        // 1. Smoothly animate Fighter-Jet Flip-Up Armor Cover
         if (window.CarGuard.servoShieldMesh) {
             const currentRx = window.CarGuard.servoShieldMesh.rotation.x;
             window.CarGuard.servoShieldMesh.rotation.x += (this.targetShieldAngle - currentRx) * 0.12;
         }
 
-        // 2. Animate 3D Ignition Key Sliding into Keyhole & Turning 90 Degrees Clockwise
         if (this.keyTurning && window.CarGuard.keyMesh) {
             const key = window.CarGuard.keyMesh;
             if (key.position.z < -0.016) {
@@ -518,3 +547,13 @@ window.Scene4Cockpit = {
         }
     }
 };
+
+// Auto-update legacy Telegram labels in DOM to WhatsApp Cloud Telemetry
+window.addEventListener('DOMContentLoaded', () => {
+    const panel = document.getElementById('telegram-panel');
+    if (panel) {
+        panel.innerHTML = panel.innerHTML
+            .replace(/Telegram Bot Dispatch/gi, 'WhatsApp Cloud Telemetry')
+            .replace(/fa-telegram/gi, 'fa-whatsapp');
+    }
+});
