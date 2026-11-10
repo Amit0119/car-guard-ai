@@ -49,7 +49,7 @@ window.CarAudio = {
         osc.stop(now + 0.40);
     },
 
-    // 3. 3D Glass Shatter Sound (Scene 3 Break-In)
+    // 3. 3D Glass Shatter Sound (Scene 3 Hammer Break-In)
     playGlassShatter: function () {
         this.init();
         const now = this.ctx.currentTime;
@@ -128,7 +128,6 @@ window.CarAudio = {
         this.init();
         const now = this.ctx.currentTime;
 
-        // Starter motor 3x rhythmic cranks (0.0s to 0.55s)
         [0, 0.18, 0.36].forEach(offset => {
             const crankOsc = this.ctx.createOscillator();
             const crankGain = this.ctx.createGain();
@@ -143,7 +142,6 @@ window.CarAudio = {
             crankOsc.stop(now + offset + 0.16);
         });
 
-        // V8 Engine Roar Flare (0.55s to 2.3s)
         const v8Osc = this.ctx.createOscillator();
         const filter = this.ctx.createBiquadFilter();
         const v8Gain = this.ctx.createGain();
@@ -190,20 +188,20 @@ window.CarGuard = {
         cam3: null  // Cockpit POV -> Real Steering Wheel + Center Console Key Safe & Fingerprint
     },
     thiefGroup: null,
+    thiefArmPivot: null,
+    hammerGroup: null,
     carDimensions: { width: 1.85, height: 1.55, length: 4.6 },
-    // Calibration defaults tuned for the Porsche Cayenne car.glb interior
     calib: {
-        carRotY: Math.PI,     // 180 deg default
-        bPillarX: 0.74,       // Outer Left/Right B-Pillar width
-        bPillarY: 0.82,       // Upper B-Pillar height
-        bPillarZ: -0.05,      // B-Pillar Z position
-        keySafeX: -0.08,      // Center console beside real steering wheel
-        keySafeY: 0.58,       // Dashboard center console height ratio
-        keySafeZ: 0.16        // Flush with front console face
+        carRotY: Math.PI,
+        bPillarX: 0.74,
+        bPillarY: 0.82,
+        bPillarZ: -0.05,
+        keySafeX: -0.08,
+        keySafeY: 0.58,
+        keySafeZ: 0.16
     }
 };
 
-// Load saved calibration from localStorage if available
 try {
     const saved = localStorage.getItem('carguard_calib_v3');
     if (saved) {
@@ -243,7 +241,6 @@ function buildCarAndOptics(scene) {
 
             applyCarTransformAndRebuild();
 
-            // Make all glass/window meshes transparent so interior cameras see outside cleanly
             rawCar.traverse(function (child) {
                 if (child.isMesh && child.material) {
                     child.castShadow = true;
@@ -282,7 +279,7 @@ function buildCarAndOptics(scene) {
         }
     );
 
-    // 3. Create 3D Suspect Model Outside Front Right Door
+    // 3. Create Articulated 3D Suspect Model with Iron Hammer Outside Front Right Door
     createSuspectModel(scene);
 
     // 4. Inject Live 3D Camera & Key Safe Calibration UI
@@ -378,7 +375,7 @@ function rebuildCalibrationRig() {
 
     // Right Front Window Plane (for Scene 3 Break-In Shatter)
     const glassMat = new THREE.MeshPhysicalMaterial({
-        color: 0x38bdf8, transparent: true, opacity: 0.14, roughness: 0.1
+        color: 0x38bdf8, transparent: true, opacity: 0.24, roughness: 0.1
     });
     const rightWindow = new THREE.Mesh(new THREE.PlaneGeometry(0.85, H * 0.25), glassMat);
     rightWindow.position.set(hw * 0.86, windowCenterY, frontWindowZ);
@@ -402,14 +399,12 @@ function rebuildCalibrationRig() {
     window.CarGuard.ignitionModuleGroup = ignitionModuleGroup;
     rigGroup.add(ignitionModuleGroup);
 
-    // 1. Sleek Rounded-Look Carbon Backing Plate
     const backingPlate = new THREE.Mesh(
         new THREE.BoxGeometry(0.095, 0.056, 0.008),
         new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.85, roughness: 0.2 })
     );
     ignitionModuleGroup.add(backingPlate);
 
-    // 2. Keyhole Outer LED Halo Bezel (Left side of pod: X = -0.018)
     const haloRing = new THREE.Mesh(
         new THREE.TorusGeometry(0.019, 0.0022, 16, 32),
         new THREE.MeshBasicMaterial({ color: 0x10b981 })
@@ -417,7 +412,6 @@ function rebuildCalibrationRig() {
     haloRing.position.set(-0.018, 0, -0.006);
     ignitionModuleGroup.add(haloRing);
 
-    // 3. Brushed Silver Keyhole Cylinder & Black Key Slot Inside
     const keyholeCylinder = new THREE.Mesh(
         new THREE.CylinderGeometry(0.016, 0.016, 0.01, 24),
         new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.95, roughness: 0.1 })
@@ -434,7 +428,6 @@ function rebuildCalibrationRig() {
     window.CarGuard.keySlotMesh = keySlot;
     ignitionModuleGroup.add(keySlot);
 
-    // 4. FIGHTER-JET HINGED FLIP-UP ARMOR COVER (Pivots from top hinge at Y = +0.020)
     const flipCoverPivot = new THREE.Group();
     flipCoverPivot.position.set(-0.018, 0.020, -0.008);
     window.CarGuard.servoShieldMesh = flipCoverPivot;
@@ -448,7 +441,6 @@ function rebuildCalibrationRig() {
     flipCap.position.set(0, -0.020, -0.004);
     flipCoverPivot.add(flipCap);
 
-    // 5. Sleek Circular Capacitive Fingerprint Sensor (Right side of pod: X = +0.024)
     const fpBezel = new THREE.Mesh(
         new THREE.TorusGeometry(0.013, 0.002, 16, 28),
         new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
@@ -465,7 +457,6 @@ function rebuildCalibrationRig() {
     fpPad.position.set(0.024, 0, -0.005);
     ignitionModuleGroup.add(fpPad);
 
-    // 6. 3D PORSCHE IGNITION KEY (Slides into keyhole & turns 90 deg in Scene 4)
     const keyMeshGroup = new THREE.Group();
     keyMeshGroup.position.set(-0.018, 0, -0.065);
     keyMeshGroup.visible = false;
@@ -572,14 +563,12 @@ function rebuildCalibrationRig() {
     window.CarGuard.cameras.cam2 = cam2;
     rigGroup.add(cam2);
 
-    // CAM-03 Physical Sensor on Top Dashboard
     const driverHeadTarget = new THREE.Vector3(0.26, bPillarCamY - 0.04, -0.05);
     const cam3Mesh = createCameraMesh(0x38bdf8);
     cam3Mesh.position.set(0.22, keySafeY + 0.20, keySafeZ + 0.12);
     cam3Mesh.lookAt(driverHeadTarget);
     rigGroup.add(cam3Mesh);
 
-    // Cockpit POV Camera: Wide natural driver view showing Steering Wheel + Dashboard + Sleek Ignition Pod
     const cam3 = new THREE.PerspectiveCamera(62, 1.6, 0.05, 15);
     cam3.position.set(0.12, keySafeY + 0.22, keySafeZ - 0.58);
     cam3.lookAt(keySafeX + 0.06, keySafeY + 0.02, keySafeZ);
@@ -623,24 +612,112 @@ function rebuildCalibrationRig() {
     window.CarGuard.fovCones.push(fovCone1, fovCone2, fovCone3);
 }
 
+// ARTICULATED 3D INTRUDER MODEL WITH IRON SLEDGEHAMMER / BREAKER TOOL
 function createSuspectModel(scene) {
     const thief = new THREE.Group();
-    const mat = new THREE.MeshStandardMaterial({ color: 0xf43f5e, roughness: 0.4 });
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.22, 1.15, 16), mat);
-    body.position.y = 0.75;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 16), mat);
-    head.position.y = 1.55;
 
+    const hoodieMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.75 });
+    const vestMat = new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.5 });
+    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.85 });
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xd6a384, roughness: 0.6 });
+    const maskMat = new THREE.MeshStandardMaterial({ color: 0x090d16, roughness: 0.8 });
+
+    // 1. Legs & Boots
+    const legGeo = new THREE.CylinderGeometry(0.10, 0.085, 0.78, 14);
+    const leftLeg = new THREE.Mesh(legGeo, pantsMat);
+    leftLeg.position.set(-0.13, 0.39, 0);
+    thief.add(leftLeg);
+
+    const rightLeg = new THREE.Mesh(legGeo, pantsMat);
+    rightLeg.position.set(0.13, 0.39, 0);
+    thief.add(rightLeg);
+
+    // 2. Torso & High-Contrast Tactical Vest (Visible in CAM-01)
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.21, 0.76, 16), hoodieMat);
+    torso.position.y = 1.12;
+    torso.castShadow = true;
+    thief.add(torso);
+
+    const chestBand = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.23, 0.32, 16), vestMat);
+    chestBand.position.y = 1.18;
+    thief.add(chestBand);
+
+    // 3. Head + Ski Mask Balaclava + Eye Slit
+    const headGroup = new THREE.Group();
+    headGroup.position.y = 1.66;
+
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.185, 16, 16), maskMat);
+    headGroup.add(head);
+
+    const eyeBand = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.055, 0.14), skinMat);
+    eyeBand.position.set(0, 0.02, 0.10);
+    headGroup.add(eyeBand);
+    thief.add(headGroup);
+
+    // 4. Left Arm (Bracing posture)
+    const leftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.065, 0.60, 12), hoodieMat);
+    leftArm.position.set(-0.32, 1.14, 0.10);
+    leftArm.rotation.z = 0.18;
+    leftArm.rotation.x = -0.35;
+    thief.add(leftArm);
+
+    // 5. Articulated Right Shoulder Pivot + Arm + Heavy Iron Hammer
+    const rightArmPivot = new THREE.Group();
+    rightArmPivot.position.set(0.32, 1.40, 0.0); // Shoulder joint height
+
+    const rightArmMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.068, 0.58, 12), hoodieMat);
+    rightArmMesh.position.set(0, -0.26, 0);
+    rightArmPivot.add(rightArmMesh);
+
+    const rightHand = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 12), skinMat);
+    rightHand.position.set(0, -0.56, 0);
+    rightArmPivot.add(rightHand);
+
+    // 3D Iron Sledgehammer / Window Breaker in Right Hand
+    const hammerGroup = new THREE.Group();
+    hammerGroup.position.set(0, -0.56, 0.04);
+
+    // Wooden Handle Shaft extending forward (+Z in local suspect space)
+    const handleMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.65 });
+    const handleShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.028, 0.65, 12), handleMat);
+    handleShaft.rotation.x = Math.PI / 2;
+    handleShaft.position.z = 0.26;
+    hammerGroup.add(handleShaft);
+
+    // Forged Steel Hammerhead
+    const steelMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, roughness: 0.2 });
+    const hammerHead = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.26, 0.12), steelMat);
+    hammerHead.position.set(0, 0, 0.55);
+    hammerGroup.add(hammerHead);
+
+    // Red Hardened Strike Spike (Points down/forward when swung)
+    const spikeMat = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.6, roughness: 0.3 });
+    const strikeSpike = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.12, 10), spikeMat);
+    strikeSpike.rotation.x = Math.PI;
+    strikeSpike.position.set(0, -0.18, 0.55);
+    hammerGroup.add(strikeSpike);
+
+    rightArmPivot.add(hammerGroup);
+    // Default ready pose: holding hammer slightly raised
+    rightArmPivot.rotation.x = -0.55;
+    thief.add(rightArmPivot);
+
+    // 6. Red YOLOv8 3D Bounding Box Wireframe
     const bbox = new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(0.75, 1.85, 0.75)),
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(0.82, 1.90, 0.82)),
         new THREE.LineBasicMaterial({ color: 0xff0044 })
     );
     bbox.position.y = 0.95;
+    thief.add(bbox);
 
-    thief.add(body, head, bbox);
+    // Face -X direction directly towards the car's Front Right Window (X = 0.82, Z = 0.40)
     thief.position.set(1.95, 0, 0.40);
+    thief.rotation.y = -Math.PI / 2;
     thief.visible = false;
+
     window.CarGuard.thiefGroup = thief;
+    window.CarGuard.thiefArmPivot = rightArmPivot;
+    window.CarGuard.hammerGroup = hammerGroup;
     scene.add(thief);
 }
 
