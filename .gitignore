@@ -3,4 +3,4 @@
 .env
 .venv/
 venv/
-owner_face.jpg
+backend/owner_face.jpg
