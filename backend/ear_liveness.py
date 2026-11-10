@@ -12,7 +12,6 @@ EYE_XML = os.path.join(CASCADE_DIR, "haarcascade_eye.xml")
 
 
 def get_working_cascade(filename, local_path):
-    """Safely loads OpenCV Haar Cascade across OpenCV 4.x and 5.0.0 without ever returning an empty classifier."""
     paths_to_try = []
     if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
         paths_to_try.append(os.path.join(cv2.data.haarcascades, filename))
@@ -24,7 +23,6 @@ def get_working_cascade(filename, local_path):
             if not c.empty():
                 return c
 
-    # Auto-download official OpenCV XML if OpenCV 5.0.0 wheel omitted it
     try:
         url = f"https://raw.githubusercontent.com/opencv/opencv/4.x/data/haarcascades/{filename}"
         urllib.request.urlretrieve(url, local_path)
@@ -39,11 +37,12 @@ def get_working_cascade(filename, local_path):
 face_cascade = get_working_cascade("haarcascade_frontalface_default.xml", FACE_XML)
 eye_cascade = get_working_cascade("haarcascade_eye.xml", EYE_XML)
 
+# Strict Liveness State: Requires 2 deliberate blinks after seeing open eyes
 blink_state = {
     "blink_count": 0,
-    "eyes_open_seen": False,
-    "eyes_closed": False,
-    "baseline_darkness": None
+    "open_frames": 0,
+    "closed_frames": 0,
+    "in_blink": False
 }
 
 
@@ -69,13 +68,13 @@ def compare_with_owner(face_crop):
     owner_img = cv2.resize(owner_img, (128, 128))
     face_crop = cv2.resize(face_crop, (128, 128))
 
-    # 1. Grayscale Structural Template Match
+    # 1. Grayscale Structural Template Correlation
     g1 = cv2.equalizeHist(cv2.cvtColor(owner_img, cv2.COLOR_BGR2GRAY))
     g2 = cv2.equalizeHist(cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY))
     res = cv2.matchTemplate(g1, g2, cv2.TM_CCOEFF_NORMED)
     struct_score = float(res[0][0])
 
-    # 2. HSV Skin/Color Histogram Match
+    # 2. HSV Skin/Color Histogram Correlation
     hsv1 = cv2.cvtColor(owner_img, cv2.COLOR_BGR2HSV)
     hsv2 = cv2.cvtColor(face_crop, cv2.COLOR_BGR2HSV)
     hist1 = cv2.calcHist([hsv1], [0, 1], None, [30, 32], [0, 180, 0, 256])
@@ -84,75 +83,48 @@ def compare_with_owner(face_crop):
     cv2.normalize(hist2, hist2, 0, 1, cv2.NORM_MINMAX)
     hist_score = float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL))
 
-    combined = (struct_score * 0.65) + (max(0.0, hist_score) * 0.35)
-    is_owner = combined >= 0.45
+    combined = (struct_score * 0.70) + (max(0.0, hist_score) * 0.30)
+    # Strict threshold: >= 52% match required so covered camera or stranger is rejected
+    is_owner = combined >= 0.52
     return is_owner, round(max(0.0, combined) * 100, 1)
 
 
-def detect_face_and_ear(frame):
+def detect_real_face_and_eyes(frame):
     """
-    Zero-crash face + eye-blink detector compatible with OpenCV 5.0.0.
-    Never calls detectMultiScale on an empty cascade!
+    Strictly detects a real human face using Haar Cascade.
+    If camera is covered/black/turned away, returns None immediately!
     """
-    h, w, _ = frame.shape
+    if frame is None:
+        return None, 0.0, False
+
+    # Reject covered/black camera frames (low brightness or low variance)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if float(np.mean(gray)) < 18.0 or float(np.std(gray)) < 12.0:
+        return None, 0.0, False
+
     gray_eq = cv2.equalizeHist(gray)
 
-    fx, fy, fw, fh = None, None, None, None
-
-    # Method A: Use Haar Cascade if non-empty
-    if face_cascade is not None and not face_cascade.empty():
-        try:
-            faces = face_cascade.detectMultiScale(gray_eq, scaleFactor=1.15, minNeighbors=4, minSize=(60, 60))
-            if len(faces) > 0:
-                faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
-                fx, fy, fw, fh = faces[0]
-        except Exception:
-            pass
-
-    # Method B: Pure NumPy YCrCb Skin-Contour Face Box Fallback (Never fails on OpenCV 5.0!)
-    if fx is None:
-        ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
-        mask = cv2.inRange(ycrcb, np.array([0, 133, 77], dtype=np.uint8), np.array([255, 173, 127], dtype=np.uint8))
-        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if cnts:
-            c = max(cnts, key=cv2.contourArea)
-            if cv2.contourArea(c) > (w * h * 0.04):
-                fx, fy, fw, fh = cv2.boundingRect(c)
-
-    if fx is None:
+    if face_cascade is None or face_cascade.empty():
         return None, 0.0, False
 
+    faces = face_cascade.detectMultiScale(gray_eq, scaleFactor=1.12, minNeighbors=5, minSize=(65, 65))
+    if len(faces) == 0:
+        return None, 0.0, False
+
+    faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
+    fx, fy, fw, fh = faces[0]
     face_crop = frame[fy:fy + fh, fx:fx + fw]
-    if face_crop.size == 0:
-        return None, 0.0, False
 
-    # Check Eye-Blink via Cascade OR Upper-Face Pupil Contrast Drop
+    # Detect open eyes inside upper half of the detected face
     upper_gray = gray_eq[fy:fy + int(fh * 0.58), fx:fx + fw]
+    eyes_open = True
+
     if eye_cascade is not None and not eye_cascade.empty() and upper_gray.size > 0:
-        try:
-            eyes = eye_cascade.detectMultiScale(upper_gray, scaleFactor=1.1, minNeighbors=3, minSize=(16, 16))
-            if len(eyes) >= 1:
-                return cv2.resize(face_crop, (128, 128)), 0.31, False
-            else:
-                return cv2.resize(face_crop, (128, 128)), 0.16, True
-        except Exception:
-            pass
+        eyes = eye_cascade.detectMultiScale(upper_gray, scaleFactor=1.08, minNeighbors=4, minSize=(15, 15))
+        eyes_open = len(eyes) >= 1
 
-    # Pure NumPy Eye-Region Vertical Gradient Analysis (When eyes close, dark pupil contrast drops sharply)
-    eye_band = gray[fy + int(fh * 0.22):fy + int(fh * 0.48), fx + int(fw * 0.15):fx + int(fw * 0.85)]
-    if eye_band.size == 0:
-        return cv2.resize(face_crop, (128, 128)), 0.30, False
-
-    contrast_score = float(np.std(eye_band))
-    if blink_state["baseline_darkness"] is None:
-        blink_state["baseline_darkness"] = contrast_score
-    else:
-        blink_state["baseline_darkness"] = 0.88 * blink_state["baseline_darkness"] + 0.12 * contrast_score
-
-    is_closed = contrast_score < (blink_state["baseline_darkness"] * 0.82)
-    ear_val = 0.16 if is_closed else 0.31
-    return cv2.resize(face_crop, (128, 128)), ear_val, is_closed
+    ear_val = 0.31 if eyes_open else 0.15
+    return cv2.resize(face_crop, (128, 128)), ear_val, (not eyes_open)
 
 
 def enroll_owner_face(image_base64):
@@ -160,34 +132,31 @@ def enroll_owner_face(image_base64):
     if frame is None:
         return {"ok": False, "message": "Invalid webcam frame."}
 
-    crop, _, _ = detect_face_and_ear(frame)
+    crop, _, _ = detect_real_face_and_eyes(frame)
     if crop is None:
-        # Center crop fallback so enrollment button ALWAYS succeeds when user is in front of webcam
-        h, w, _ = frame.shape
-        ch, cw = int(h * 0.6), int(w * 0.45)
-        y1, x1 = (h - ch) // 2, (w - cw) // 2
-        crop = cv2.resize(frame[y1:y1 + ch, x1:x1 + cw], (128, 128))
+        return {"ok": False, "message": "Chehra saaf nahi dikh raha! Camera ke samne roshni mein seedha dekh."}
 
     cv2.imwrite(OWNER_IMG_PATH, crop)
     reset_liveness_session()
-    return {"ok": True, "message": "Owner Face (Amit) registered & locked in backend/owner_face.jpg!"}
+    return {"ok": True, "message": "Owner Face (Amit) locked! Ab 2 baar aankh jhapka (Blink 2 times)."}
 
 
 def reset_liveness_session():
     blink_state["blink_count"] = 0
-    blink_state["eyes_open_seen"] = False
-    blink_state["eyes_closed"] = False
-    blink_state["baseline_darkness"] = None
+    blink_state["open_frames"] = 0
+    blink_state["closed_frames"] = 0
+    blink_state["in_blink"] = False
 
 
 def process_liveness_frame(image_base64):
     try:
         frame = decode_base64_frame(image_base64)
-        if frame is None:
-            return {"ok": False, "error": "Empty frame"}
+        crop, avg_ear, is_closed = detect_real_face_and_eyes(frame)
 
-        crop, avg_ear, is_closed = detect_face_and_ear(frame)
         if crop is None:
+            # Reset open streak if face disappears or camera is covered
+            blink_state["open_frames"] = 0
+            blink_state["in_blink"] = False
             return {
                 "ok": True,
                 "face_detected": False,
@@ -195,32 +164,47 @@ def process_liveness_frame(image_base64):
                 "ear": 0.0,
                 "blink_count": blink_state["blink_count"],
                 "liveness_passed": False,
-                "status_text": "NO FACE IN CAM-03 — LOOK AT CAMERA"
+                "status_text": "NO FACE DETECTED — LOOK AT CAMERA"
             }
 
         if not os.path.exists(OWNER_IMG_PATH):
-            cv2.imwrite(OWNER_IMG_PATH, crop)
+            return {
+                "ok": True,
+                "face_detected": True,
+                "is_owner": False,
+                "ear": avg_ear,
+                "blink_count": 0,
+                "liveness_passed": False,
+                "status_text": "CLICK 'Register My Face' FIRST!"
+            }
 
         is_owner, match_confidence = compare_with_owner(crop)
 
+        # Count blinks ONLY when Owner Face is actively matched
         if is_owner:
             if not is_closed:
-                blink_state["eyes_open_seen"] = True
-                if blink_state["eyes_closed"]:
+                blink_state["open_frames"] += 1
+                if blink_state["in_blink"]:
                     blink_state["blink_count"] += 1
-                    blink_state["eyes_closed"] = False
+                    blink_state["in_blink"] = False
+                blink_state["closed_frames"] = 0
             else:
-                if blink_state["eyes_open_seen"]:
-                    blink_state["eyes_closed"] = True
+                # Must have seen open eyes for at least 2 frames before counting a blink
+                if blink_state["open_frames"] >= 2:
+                    blink_state["closed_frames"] += 1
+                    if blink_state["closed_frames"] >= 1:
+                        blink_state["in_blink"] = True
 
-        liveness_passed = is_owner and (blink_state["blink_count"] >= 1)
+        # Require 2 intentional blinks to unlock!
+        REQUIRED_BLINKS = 2
+        liveness_passed = is_owner and (blink_state["blink_count"] >= REQUIRED_BLINKS)
 
         if not is_owner:
-            status_text = f"UNAUTHORIZED FACE ({match_confidence}% MATCH) - BLINK LOCKED!"
+            status_text = f"UNAUTHORIZED FACE ({match_confidence}%) — LOCKED!"
         elif liveness_passed:
-            status_text = f"OWNER VERIFIED (AMIT) + BLINK CONFIRMED (EAR: {avg_ear})"
+            status_text = f"OWNER VERIFIED ({match_confidence}%) | BLINKS: {blink_state['blink_count']}/2"
         else:
-            status_text = f"OWNER MATCHED ({match_confidence}%) — BLINK EYES NOW (EAR: {avg_ear})"
+            status_text = f"OWNER MATCH ({match_confidence}%) — BLINK {blink_state['blink_count']}/2 (EAR: {avg_ear})"
 
         return {
             "ok": True,
@@ -233,7 +217,7 @@ def process_liveness_frame(image_base64):
             "status_text": status_text
         }
     except Exception as e:
-        print(f"[LIVENESS SAFE-CATCH] {e}")
+        print(f"[LIVENESS ERROR] {e}")
         return {
             "ok": True,
             "face_detected": False,
@@ -241,5 +225,5 @@ def process_liveness_frame(image_base64):
             "ear": 0.0,
             "blink_count": 0,
             "liveness_passed": False,
-            "status_text": "CALIBRATING CAMERA SENSOR..."
+            "status_text": "CAMERA SENSOR ERROR"
         }
