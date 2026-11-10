@@ -13,7 +13,7 @@ CORS(app)
 def health():
     return jsonify({
         "status": "online",
-        "service": "Car-Guard-AI Backend (WhatsApp SOS + MediaPipe Owner Face/EAR Engine)"
+        "service": "Car-Guard-AI Telemetry & Biometric Security Server"
     })
 
 
@@ -21,7 +21,7 @@ def health():
 def trigger_alert():
     data = request.get_json(force=True) or {}
     event_title = data.get("title", "SECURITY BREACH DETECTED")
-    details = data.get("details", "Suspicious activity around vehicle.")
+    details = data.get("details", "Suspicious activity detected around vehicle perimeter.")
     image_base64 = data.get("image", None)
     lat = data.get("lat", 28.3670)
     lon = data.get("lon", 79.4304)
@@ -35,7 +35,7 @@ def trigger_alert():
 
     return jsonify({
         "ok": True,
-        "message": "WhatsApp SOS, Snapshot & Live GPS dispatched!"
+        "message": "WhatsApp Cloud SOS, Snapshot & GPS telemetry dispatched."
     })
 
 
@@ -44,7 +44,7 @@ def liveness_check():
     data = request.get_json(force=True) or {}
     image_base64 = data.get("image", None)
     if not image_base64:
-        return jsonify({"ok": False, "error": "No webcam frame provided"}), 400
+        return jsonify({"ok": False, "error": "No video frame provided"}), 400
 
     result = process_liveness_frame(image_base64)
     return jsonify(result)
@@ -54,10 +54,11 @@ def liveness_check():
 def enroll_owner():
     data = request.get_json(force=True) or {}
     image_base64 = data.get("image", None)
+    auth_pin = data.get("pin", "")
     if not image_base64:
-        return jsonify({"ok": False, "message": "No webcam frame provided"}), 400
+        return jsonify({"ok": False, "message": "No video frame provided"}), 400
 
-    result = enroll_owner_face(image_base64)
+    result = enroll_owner_face(image_base64, auth_pin=auth_pin)
     return jsonify(result)
 
 
@@ -68,5 +69,5 @@ def reset_liveness():
 
 
 if __name__ == "__main__":
-    print("🚀 CAR-GUARD-AI Backend Server running on http://127.0.0.1:5000")
+    print("CAR-GUARD-AI Telemetry & Biometric Server running on http://127.0.0.1:5000")
     app.run(host="127.0.0.1", port=5000, debug=True)

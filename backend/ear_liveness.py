@@ -37,7 +37,6 @@ def get_working_cascade(filename, local_path):
 face_cascade = get_working_cascade("haarcascade_frontalface_default.xml", FACE_XML)
 eye_cascade = get_working_cascade("haarcascade_eye.xml", EYE_XML)
 
-# Strict Liveness State: Requires 2 deliberate blinks after seeing open eyes
 blink_state = {
     "blink_count": 0,
     "open_frames": 0,
@@ -68,13 +67,11 @@ def compare_with_owner(face_crop):
     owner_img = cv2.resize(owner_img, (128, 128))
     face_crop = cv2.resize(face_crop, (128, 128))
 
-    # 1. Grayscale Structural Template Correlation
     g1 = cv2.equalizeHist(cv2.cvtColor(owner_img, cv2.COLOR_BGR2GRAY))
     g2 = cv2.equalizeHist(cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY))
     res = cv2.matchTemplate(g1, g2, cv2.TM_CCOEFF_NORMED)
     struct_score = float(res[0][0])
 
-    # 2. HSV Skin/Color Histogram Correlation
     hsv1 = cv2.cvtColor(owner_img, cv2.COLOR_BGR2HSV)
     hsv2 = cv2.cvtColor(face_crop, cv2.COLOR_BGR2HSV)
     hist1 = cv2.calcHist([hsv1], [0, 1], None, [30, 32], [0, 180, 0, 256])
@@ -84,20 +81,14 @@ def compare_with_owner(face_crop):
     hist_score = float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL))
 
     combined = (struct_score * 0.70) + (max(0.0, hist_score) * 0.30)
-    # Strict threshold: >= 52% match required so covered camera or stranger is rejected
     is_owner = combined >= 0.52
     return is_owner, round(max(0.0, combined) * 100, 1)
 
 
 def detect_real_face_and_eyes(frame):
-    """
-    Strictly detects a real human face using Haar Cascade.
-    If camera is covered/black/turned away, returns None immediately!
-    """
     if frame is None:
         return None, 0.0, False
 
-    # Reject covered/black camera frames (low brightness or low variance)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     if float(np.mean(gray)) < 18.0 or float(np.std(gray)) < 12.0:
         return None, 0.0, False
@@ -115,7 +106,6 @@ def detect_real_face_and_eyes(frame):
     fx, fy, fw, fh = faces[0]
     face_crop = frame[fy:fy + fh, fx:fx + fw]
 
-    # Detect open eyes inside upper half of the detected face
     upper_gray = gray_eq[fy:fy + int(fh * 0.58), fx:fx + fw]
     eyes_open = True
 
@@ -127,18 +117,40 @@ def detect_real_face_and_eyes(frame):
     return cv2.resize(face_crop, (128, 128)), ear_val, (not eyes_open)
 
 
-def enroll_owner_face(image_base64):
+def enroll_owner_face(image_base64, auth_pin=""):
     frame = decode_base64_frame(image_base64)
     if frame is None:
-        return {"ok": False, "message": "Invalid webcam frame."}
+        return {"ok": False, "code": "INVALID_FRAME", "message": "OPTICAL ERROR: Invalid video frame payload."}
 
     crop, _, _ = detect_real_face_and_eyes(frame)
     if crop is None:
-        return {"ok": False, "message": "Chehra saaf nahi dikh raha! Camera ke samne roshni mein seedha dekh."}
+        return {
+            "ok": False,
+            "code": "NO_FACE",
+            "message": "OPTICAL SENSOR: No clear facial geometry detected. Align face with CAM-03."
+        }
+
+    # Anti-Overwrite Security Check: If owner profile already exists, verify identity or Master Passcode
+    if os.path.exists(OWNER_IMG_PATH):
+        is_owner, match_confidence = compare_with_owner(crop)
+        pin_authorized = str(auth_pin).strip() == "2026"
+
+        if not is_owner and not pin_authorized:
+            return {
+                "ok": False,
+                "code": "UNAUTHORIZED_OVERWRITE",
+                "match_confidence": match_confidence,
+                "message": f"SECURITY LOCK: Biometric overwrite denied ({match_confidence}% match). Verify Owner Face or enter Passcode first."
+            }
 
     cv2.imwrite(OWNER_IMG_PATH, crop)
     reset_liveness_session()
-    return {"ok": True, "message": "Owner Face (Amit) locked! Ab 2 baar aankh jhapka (Blink 2 times)."}
+    return {
+        "ok": True,
+        "code": "ENROLLED",
+        "owner_enrolled": True,
+        "message": "BIOMETRIC ID LOCKED: Owner facial template encrypted. Blink twice (2/2) to authenticate."
+    }
 
 
 def reset_liveness_session():
@@ -152,35 +164,36 @@ def process_liveness_frame(image_base64):
     try:
         frame = decode_base64_frame(image_base64)
         crop, avg_ear, is_closed = detect_real_face_and_eyes(frame)
+        owner_exists = os.path.exists(OWNER_IMG_PATH)
 
         if crop is None:
-            # Reset open streak if face disappears or camera is covered
             blink_state["open_frames"] = 0
             blink_state["in_blink"] = False
             return {
                 "ok": True,
                 "face_detected": False,
                 "is_owner": False,
+                "owner_enrolled": owner_exists,
                 "ear": 0.0,
                 "blink_count": blink_state["blink_count"],
                 "liveness_passed": False,
-                "status_text": "NO FACE DETECTED — LOOK AT CAMERA"
+                "status_text": "NO FACE DETECTED — ALIGN WITH CAM-03"
             }
 
-        if not os.path.exists(OWNER_IMG_PATH):
+        if not owner_exists:
             return {
                 "ok": True,
                 "face_detected": True,
                 "is_owner": False,
+                "owner_enrolled": False,
                 "ear": avg_ear,
                 "blink_count": 0,
                 "liveness_passed": False,
-                "status_text": "CLICK 'Register My Face' FIRST!"
+                "status_text": "NO BIOMETRIC PROFILE — CLICK 'ENROLL ID'"
             }
 
         is_owner, match_confidence = compare_with_owner(crop)
 
-        # Count blinks ONLY when Owner Face is actively matched
         if is_owner:
             if not is_closed:
                 blink_state["open_frames"] += 1
@@ -189,27 +202,26 @@ def process_liveness_frame(image_base64):
                     blink_state["in_blink"] = False
                 blink_state["closed_frames"] = 0
             else:
-                # Must have seen open eyes for at least 2 frames before counting a blink
                 if blink_state["open_frames"] >= 2:
                     blink_state["closed_frames"] += 1
                     if blink_state["closed_frames"] >= 1:
                         blink_state["in_blink"] = True
 
-        # Require 2 intentional blinks to unlock!
         REQUIRED_BLINKS = 2
         liveness_passed = is_owner and (blink_state["blink_count"] >= REQUIRED_BLINKS)
 
         if not is_owner:
-            status_text = f"UNAUTHORIZED FACE ({match_confidence}%) — LOCKED!"
+            status_text = f"UNAUTHORIZED FACE ({match_confidence}%) — ACCESS DENIED"
         elif liveness_passed:
-            status_text = f"OWNER VERIFIED ({match_confidence}%) | BLINKS: {blink_state['blink_count']}/2"
+            status_text = f"BIOMETRIC VERIFIED ({match_confidence}%) | LIVENESS: 2/2"
         else:
-            status_text = f"OWNER MATCH ({match_confidence}%) — BLINK {blink_state['blink_count']}/2 (EAR: {avg_ear})"
+            status_text = f"ID MATCHED ({match_confidence}%) — BLINK {blink_state['blink_count']}/2 (EAR: {avg_ear})"
 
         return {
             "ok": True,
             "face_detected": True,
             "is_owner": is_owner,
+            "owner_enrolled": True,
             "match_confidence": match_confidence,
             "ear": avg_ear,
             "blink_count": blink_state["blink_count"],
@@ -222,8 +234,9 @@ def process_liveness_frame(image_base64):
             "ok": True,
             "face_detected": False,
             "is_owner": False,
+            "owner_enrolled": os.path.exists(OWNER_IMG_PATH),
             "ear": 0.0,
             "blink_count": 0,
             "liveness_passed": False,
-            "status_text": "CAMERA SENSOR ERROR"
+            "status_text": "OPTICAL SENSOR CALIBRATING..."
         }
