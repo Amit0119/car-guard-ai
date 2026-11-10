@@ -1,4 +1,4 @@
-// SCENE 4: ZERO-TRUST COCKPIT AUTH (LIVE WEBCAM OWNER FACE + EAR BLINK + 1.5s HOLD FINGERPRINT + PIN)
+// SCENE 4: STRICT ZERO-TRUST COCKPIT AUTH (REAL CAM OWNER FACE + 2 BLINKS + 1.5s HOLD FINGERPRINT + PIN)
 window.Scene4Cockpit = {
     blinkVerified: false,
     fingerVerified: false,
@@ -27,7 +27,6 @@ window.Scene4Cockpit = {
 
         if (window.CarGuard.carGroup) window.CarGuard.carGroup.rotation.y = 0;
 
-        // Detect if Scene 2 (Loitering) or Scene 3 (Break-In) happened right before entering Cockpit
         const currentStatus = document.getElementById('system-status-text')?.innerText || '';
         if (currentStatus.includes('LOITERING') || currentStatus.includes('BREAK-IN')) {
             this.priorThreatDetected = true;
@@ -35,7 +34,6 @@ window.Scene4Cockpit = {
             this.priorThreatDetected = false;
         }
 
-        // Switch main camera straight to Driver Cockpit POV
         switchMainPOV('cockpit');
 
         if (window.CarGuard.thiefGroup) window.CarGuard.thiefGroup.visible = false;
@@ -76,14 +74,12 @@ window.Scene4Cockpit = {
         if (window.CarGuard.fovCones[1]) window.CarGuard.fovCones[1].material.color.setHex(0x10b981);
         if (window.CarGuard.fovCones[2]) window.CarGuard.fovCones[2].material.color.setHex(0x38bdf8);
 
-        // Inject Upgraded Cockpit UI (Live Camera Status + 1.5s Hold Fingerprint Bar)
         this.injectUpgradedAuthUI();
 
         const pinInput = document.getElementById('pin-input');
         if (pinInput) pinInput.value = '';
         document.getElementById('start-engine-box')?.classList.add('hidden');
 
-        // Update Telemetry Header
         document.getElementById('status-dot').className = 'w-3 h-3 rounded-full bg-cyan-400 animate-ping';
         document.getElementById('system-status-text').innerText = this.priorThreatDetected
             ? 'COCKPIT: 3-OF-3 HIGH-ALERT LOCK'
@@ -93,7 +89,6 @@ window.Scene4Cockpit = {
         document.getElementById('tel-shield').innerHTML = '<i class="fa-solid fa-lock mr-1"></i>FLIP-GUARD LOCKED';
         document.getElementById('tel-shield').className = 'text-amber-400 font-semibold';
 
-        // Reset Backend Liveness Session & Start Webcam Polling
         fetch('http://127.0.0.1:5000/api/reset-liveness', { method: 'POST' }).catch(() => {});
         this.startLivenessPolling();
 
@@ -133,16 +128,16 @@ window.Scene4Cockpit = {
                 <div id="auth-mode-banner">${modeBanner}</div>
 
                 <div class="space-y-2">
-                    <!-- FACTOR 1: FACE LOCK + EYE-BLINK (EAR) -->
+                    <!-- FACTOR 1: STRICT REAL WEBCAM FACE LOCK + 2 EYE-BLINKS -->
                     <div class="p-2 rounded-lg bg-slate-900/90 border border-slate-800">
                         <div class="flex items-center justify-between">
                             <div>
-                                <div class="font-semibold text-slate-200">1. Owner Face + Eye-Blink (EAR)</div>
-                                <div id="live-ear-status" class="text-[10px] text-cyan-400 mono">Turn on "Use Real Cam" or click Simulate</div>
+                                <div class="font-semibold text-slate-200">1. Owner Face + 2 Eye-Blinks</div>
+                                <div id="live-ear-status" class="text-[10px] text-amber-400 mono">Turn ON "Use Real Cam" to scan face</div>
                             </div>
-                            <button id="btn-auth-blink" onclick="window.Scene4Cockpit.verifyBlink(false)" class="px-2.5 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 border border-cyan-500/40 text-[10px] font-semibold">
-                                Simulate Blink
-                            </button>
+                            <span id="badge-auth-blink" class="px-2.5 py-1 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-semibold mono">
+                                <i class="fa-solid fa-video-slash mr-1"></i>Cam Off
+                            </span>
                         </div>
                     </div>
 
@@ -183,7 +178,7 @@ window.Scene4Cockpit = {
                     </div>
                 </div>
 
-                <!-- ENGINE START BUTTON (APPEARS ONCE KEYHOLE FLIP-GUARD UNLOCKS) -->
+                <!-- ENGINE START BUTTON -->
                 <div id="start-engine-box" class="hidden mt-2.5 pt-2 border-t border-slate-800">
                     <button id="btn-start-engine" onclick="window.Scene4Cockpit.igniteEngine()" class="w-full py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-black tracking-wider text-xs shadow-lg hover:brightness-110">
                         <i class="fa-solid fa-key mr-1"></i> INSERT 3D KEY & IGNITE ENGINE
@@ -193,12 +188,12 @@ window.Scene4Cockpit = {
         `;
     },
 
-    // --- 1. LIVE WEBCAM OWNER FACE + EYE-BLINK POLLING ---
+    // --- 1. STRICT REAL WEBCAM OWNER FACE + 2 EYE-BLINKS POLLING ---
     startLivenessPolling: function () {
         this.stopLivenessPolling();
         this.livenessPollId = setInterval(() => {
             this.pollWebcamFrame();
-        }, 350);
+        }, 320);
     },
 
     stopLivenessPolling: function () {
@@ -216,13 +211,13 @@ window.Scene4Cockpit = {
         c.height = 240;
         const ctx = c.getContext('2d');
         ctx.drawImage(videoEl, 0, 0, c.width, c.height);
-        return c.toDataURL('image/jpeg', 0.75);
+        return c.toDataURL('image/jpeg', 0.80);
     },
 
     enrollOwnerFace: async function () {
         const frame = this.captureWebcamBase64();
         if (!frame) {
-            alert('Pehle left panel mein "Use Real Cam" button daba kar laptop camera on kar!');
+            alert('Pehle left panel mein "Use Real Cam" button daba kar laptop camera ON kar!');
             return;
         }
         try {
@@ -236,7 +231,7 @@ window.Scene4Cockpit = {
                 window.CarAudio?.playBeep(1250, 0.16, 'sine');
                 logTelegram(`✅ [FACE LOCK ENROLLED] ${data.message}`);
                 const lbl = document.getElementById('live-ear-status');
-                if (lbl) lbl.innerText = 'OWNER FACE SAVED! Now blink your eyes...';
+                if (lbl) lbl.innerText = 'FACE LOCKED! Blink 2 times in camera...';
             } else {
                 alert(data.message || 'Face enrollment failed.');
             }
@@ -247,8 +242,23 @@ window.Scene4Cockpit = {
 
     pollWebcamFrame: async function () {
         if (this.blinkVerified || this.pollBusy) return;
+
+        const lbl = document.getElementById('live-ear-status');
+        const badge = document.getElementById('badge-auth-blink');
+
+        // Strictly block verification if 3D Cam is active (Real Webcam OFF)
         const frame = this.captureWebcamBase64();
-        if (!frame) return;
+        if (!frame) {
+            if (lbl) {
+                lbl.innerText = 'REAL CAM OFF — Turn on "Use Real Cam"';
+                lbl.className = 'text-[10px] text-amber-400 mono';
+            }
+            if (badge) {
+                badge.innerHTML = '<i class="fa-solid fa-video-slash mr-1"></i>Cam Off';
+                badge.className = 'px-2.5 py-1 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-semibold mono';
+            }
+            return;
+        }
 
         this.pollBusy = true;
         try {
@@ -258,16 +268,30 @@ window.Scene4Cockpit = {
                 body: JSON.stringify({ image: frame })
             });
             const data = await res.json();
-            const lbl = document.getElementById('live-ear-status');
 
             if (data.ok && lbl) {
                 lbl.innerText = data.status_text;
 
-                if (data.face_detected && !data.is_owner) {
+                // Update Left Panel CAM-03 Telemetry
+                const earEl = document.getElementById('ear-val');
+                const blinkEl = document.getElementById('blink-count');
+                if (earEl) earEl.innerText = data.face_detected ? `${data.ear} (${data.ear < 0.20 ? 'BLINK' : 'OPEN'})` : 'NO FACE';
+                if (blinkEl) blinkEl.innerText = `${data.blink_count}/2`;
+
+                if (!data.face_detected) {
+                    lbl.className = 'text-[10px] text-amber-400 mono';
+                    if (badge) {
+                        badge.innerHTML = '<i class="fa-solid fa-eye-slash mr-1"></i>No Face';
+                        badge.className = 'px-2.5 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-semibold mono';
+                    }
+                } else if (!data.is_owner) {
                     lbl.className = 'text-[10px] text-rose-400 font-bold mono animate-pulse';
+                    if (badge) {
+                        badge.innerHTML = '<i class="fa-solid fa-xmark mr-1"></i>Intruder';
+                        badge.className = 'px-2.5 py-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold mono';
+                    }
                     this.intruderFrames++;
-                    // If an unauthorized face sits in driver seat for ~4 seconds, trigger WhatsApp SOS!
-                    if (this.intruderFrames >= 11 && !this.intruderAlertSent) {
+                    if (this.intruderFrames >= 12 && !this.intruderAlertSent) {
                         this.intruderAlertSent = true;
                         window.CarAudio?.playBeep(260, 0.35, 'sawtooth');
                         logTelegram('🚨 [FACE LOCK REJECTED] Unauthorized person in Driver Seat! Sending WhatsApp snapshot...');
@@ -278,42 +302,42 @@ window.Scene4Cockpit = {
                             );
                         }
                     }
-                } else if (data.face_detected && data.is_owner) {
+                } else {
                     this.intruderFrames = 0;
-                    lbl.className = 'text-[10px] text-emerald-400 font-semibold mono';
+                    lbl.className = 'text-[10px] text-cyan-300 font-semibold mono';
+                    if (badge) {
+                        badge.innerHTML = `Blink ${data.blink_count}/2`;
+                        badge.className = 'px-2.5 py-1 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[10px] font-bold mono';
+                    }
                     if (data.liveness_passed && !this.blinkVerified) {
-                        this.verifyBlink(true, data.ear, data.match_confidence);
+                        this.verifyBlink(data.ear, data.match_confidence);
                     }
                 }
             }
         } catch (e) {
-            // Silent ignore if backend is not running
+            // Ignore when server is offline
         } finally {
             this.pollBusy = false;
         }
     },
 
-    verifyBlink: function (fromRealCam = false, earVal = 0.17, matchScore = 98.4) {
+    verifyBlink: function (earVal = 0.15, matchScore = 92.0) {
         if (this.blinkVerified) return;
         this.blinkVerified = true;
         window.CarAudio?.playBeep(980, 0.12, 'sine');
 
-        const btn = document.getElementById('btn-auth-blink');
-        if (btn) {
-            btn.innerHTML = '<i class="fa-solid fa-check mr-1"></i>Verified';
-            btn.className = 'px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold';
+        const badge = document.getElementById('badge-auth-blink');
+        if (badge) {
+            badge.innerHTML = '<i class="fa-solid fa-check mr-1"></i>Verified';
+            badge.className = 'px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold mono';
         }
         const lbl = document.getElementById('live-ear-status');
         if (lbl) {
-            lbl.innerText = fromRealCam
-                ? `REAL CAM VERIFIED (Match: ${matchScore}% | EAR: ${earVal})`
-                : 'SIMULATED LIVENESS PASSED (EAR: 0.17)';
+            lbl.innerText = `OWNER VERIFIED (Match: ${matchScore}% | 2/2 Blinks)`;
             lbl.className = 'text-[10px] text-emerald-400 font-bold mono';
         }
 
-        logTelegram(fromRealCam
-            ? `👁️ [REAL CAM-03] Owner Face (${matchScore}%) + Live Eye-Blink (EAR ${earVal}) verified!`
-            : '👁️ [CAM-03 LIVENESS] Driver Face + Eye-Blink (EAR < 0.21) confirmed.');
+        logTelegram(`👁️ [REAL CAM-03] Owner Face (${matchScore}%) + 2 Live Eye-Blinks verified!`);
         this.checkUnlockCondition();
     },
 
@@ -329,12 +353,10 @@ window.Scene4Cockpit = {
             lbl.className = 'text-[10px] text-cyan-300 font-semibold mono animate-pulse';
         }
 
-        // 15 steps x 100ms = 1.5 seconds hold
         this.fpHoldInterval = setInterval(() => {
             this.fpHoldProgress += 6.67;
             if (bar) bar.style.width = `${Math.min(100, this.fpHoldProgress)}%`;
 
-            // Play subtle rising ultrasonic scan pitch every 200ms
             if (Math.round(this.fpHoldProgress) % 13 === 0) {
                 window.CarAudio?.playBeep(600 + this.fpHoldProgress * 6, 0.05, 'sine');
             }
@@ -421,7 +443,6 @@ window.Scene4Cockpit = {
 
         const requiredCount = this.priorThreatDetected ? 3 : 2;
 
-        // Update mode progress badge
         const banner = document.getElementById('auth-mode-banner');
         if (banner && !this.priorThreatDetected) {
             banner.innerHTML = `<div class="mb-2 px-2.5 py-1 rounded bg-cyan-500/15 border border-cyan-500/40 text-[10px] text-cyan-300 font-semibold flex items-center justify-between">
@@ -432,7 +453,8 @@ window.Scene4Cockpit = {
 
         if (passedCount >= requiredCount && !this.shieldUnlocked) {
             this.shieldUnlocked = true;
-            this.targetShieldAngle = -Math.PI * 0.62; // Flip red cover UP by 112 degrees!
+            // POSITIVE ANGLE (+Math.PI * 0.62) flips the red Key Safe cover FORWARD & UP towards the driver!
+            this.targetShieldAngle = Math.PI * 0.62;
 
             setTimeout(() => window.CarAudio?.playServoWhir(), 180);
 

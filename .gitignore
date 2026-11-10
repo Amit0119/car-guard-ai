@@ -4,3 +4,5 @@
 .venv/
 venv/
 backend/owner_face.jpg
+
+backend/*.xml
