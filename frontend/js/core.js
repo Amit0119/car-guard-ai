@@ -7,7 +7,6 @@ const WHATSAPP_API_URL = 'http://127.0.0.1:5000/api/whatsapp-alert';
 const VERIFIED_USER_LAT = 28.444916;
 const VERIFIED_USER_LON = 78.980528;
 
-// Global error catcher so any JS issue prints visibly into the Telemetry Log Box
 window.addEventListener('error', function (e) {
     appendRawLog(`<span class="text-rose-400 font-bold">⚠️ [JS ERROR] ${e.message} (${e.filename?.split('/').pop()}:${e.lineno})</span>`);
 });
@@ -16,7 +15,6 @@ function initSimulation() {
     const container = document.getElementById('canvas-container');
     if (!container) return;
 
-    // Clear any duplicate canvas on hot reload
     container.innerHTML = '';
 
     scene = new THREE.Scene();
@@ -56,7 +54,6 @@ function initSimulation() {
     const grid = new THREE.GridHelper(40, 40, 0x0284c7, 0x1e293b);
     scene.add(grid);
 
-    // Start 60FPS render loop FIRST so the 3D viewport is never black
     window.addEventListener('resize', onWindowResize);
     animate();
 
@@ -117,7 +114,6 @@ function animate() {
     const conesUserEnabled = conesCheckbox ? conesCheckbox.checked : true;
     const cones = window.CarGuard?.fovCones || [];
 
-    // PASS 1: Main Full-Screen View
     cones.forEach(c => (c.visible = conesUserEnabled));
     renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
     renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
@@ -134,7 +130,6 @@ function animate() {
     activeCam.updateProjectionMatrix();
     renderer.render(scene, activeCam);
 
-    // PASS 2: Left Panel Live 3D CCTV Feeds
     if (window.CarGuard && window.CarGuard.cameras) {
         renderSubViewport(window.CarGuard.cameras.cam1, 'cam1-viewport', false);
         renderSubViewport(window.CarGuard.cameras.cam2, 'cam2-viewport', false);
@@ -228,6 +223,9 @@ function setSimulationScene(mode) {
         if (mode !== 'tamper' && window.Scene5Tamper && typeof window.Scene5Tamper.cleanup === 'function') {
             window.Scene5Tamper.cleanup();
         }
+        if (mode !== 'tilt' && window.Scene6TiltRelay && typeof window.Scene6TiltRelay.cleanup === 'function') {
+            window.Scene6TiltRelay.cleanup();
+        }
 
         if (mode === 'standby' && window.CarGuard) {
             window.CarAudio?.stopSiren();
@@ -239,6 +237,11 @@ function setSimulationScene(mode) {
                 opticsEl.innerText = 'CLEAR (LUX: 98%)';
                 opticsEl.className = 'text-emerald-400';
             }
+            const imuEl = document.getElementById('tel-imu');
+            if (imuEl) {
+                imuEl.innerText = 'LEVEL (0.0° | SECURE)';
+                imuEl.className = 'text-emerald-400';
+            }
         }
 
         const sceneMap = {
@@ -246,6 +249,7 @@ function setSimulationScene(mode) {
             loitering: window.Scene2Loitering,
             breakin: window.Scene3Breakin,
             tamper: window.Scene5Tamper,
+            tilt: window.Scene6TiltRelay,
             cockpit: window.Scene4Cockpit
         };
 

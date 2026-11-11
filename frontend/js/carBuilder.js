@@ -191,7 +191,7 @@ window.CarGuard = {
     activeHumanAction: null,
     humanBones: {},
     humanRole: 'thief',
-    humanPose: 'standing',
+    humanPose: 'standing', // 'standing', 'walking', 'sitting', 'crouching'
     ownerReachAmount: 0,
     lastThiefPos: new THREE.Vector3(),
 
@@ -479,14 +479,8 @@ function rebuildCalibrationRig() {
         new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.7, roughness: 0.25 })
     );
     keyFob.position.set(0, 0, -0.014);
+    keyFob.add(new THREE.Mesh(new THREE.BoxGeometry(0.019, 0.008, 0.022), new THREE.MeshBasicMaterial({ color: 0xe11d48 })));
     keyMeshGroup.add(keyFob);
-
-    const keyAccent = new THREE.Mesh(
-        new THREE.BoxGeometry(0.019, 0.008, 0.022),
-        new THREE.MeshBasicMaterial({ color: 0xe11d48 })
-    );
-    keyAccent.position.set(0, 0, -0.016);
-    keyMeshGroup.add(keyAccent);
 
     window.CarGuard.keyMesh = keyMeshGroup;
     ignitionModuleGroup.add(keyMeshGroup);
@@ -773,7 +767,7 @@ window.setHumanCharacterState = function (role, pose) {
     window.CarGuard.humanPose = pose;
 
     if (window.CarGuard.hammerGroup) {
-        window.CarGuard.hammerGroup.visible = (role === 'thief');
+        window.CarGuard.hammerGroup.visible = (role === 'thief' && pose !== 'crouching');
     }
     if (window.CarGuard.suspectBBox) {
         window.CarGuard.suspectBBox.visible = (role === 'thief');
@@ -799,7 +793,7 @@ function startHumanAnimationLoop() {
         const distMoved = thief.position.distanceTo(window.CarGuard.lastThiefPos);
         window.CarGuard.lastThiefPos.copy(thief.position);
 
-        if (window.CarGuard.humanPose !== 'sitting') {
+        if (window.CarGuard.humanPose !== 'sitting' && window.CarGuard.humanPose !== 'crouching') {
             if (distMoved > 0.0015) {
                 playHumanClip('walk');
             } else {
@@ -817,7 +811,30 @@ function startHumanAnimationLoop() {
         const armPivot = window.CarGuard.thiefArmPivot;
 
         if (window.CarGuard.humanGLBModel && bones.rightArm) {
-            if (window.CarGuard.humanRole === 'thief' && armPivot) {
+            if (window.CarGuard.humanPose === 'crouching') {
+                // Positive spine rotation (+0.58) bends the upper body FORWARD toward the car & jack handle!
+                if (bones.spine) {
+                    pitchBoneInCharSpace(bones.spine, thief, 0.58);
+                }
+                // Slight natural knee bend while standing behind the jack
+                pitchBoneInCharSpace(bones.leftUpLeg, thief, -0.22);
+                pitchBoneInCharSpace(bones.rightUpLeg, thief, -0.22);
+                pitchBoneInCharSpace(bones.leftLeg, thief, 0.25);
+                pitchBoneInCharSpace(bones.rightLeg, thief, 0.25);
+
+                // Arms angled downward toward waist-high jack T-handle (-0.38 rad) instead of high in the air
+                const pumpPitch = armPivot ? armPivot.rotation.x : -0.38;
+                pitchBoneInCharSpace(bones.rightArm, thief, pumpPitch);
+                if (bones.leftArm) {
+                    pitchBoneInCharSpace(bones.leftArm, thief, pumpPitch);
+                }
+                if (bones.rightForeArm) {
+                    pitchBoneInCharSpace(bones.rightForeArm, thief, -0.18);
+                }
+                if (bones.leftForeArm) {
+                    pitchBoneInCharSpace(bones.leftForeArm, thief, -0.18);
+                }
+            } else if (window.CarGuard.humanRole === 'thief' && armPivot) {
                 const swingPitch = armPivot.rotation.x + 0.35;
                 pitchBoneInCharSpace(bones.rightArm, thief, swingPitch);
                 if (bones.rightForeArm) {
