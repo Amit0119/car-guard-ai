@@ -32,7 +32,7 @@
             <div>
                 <h1 class="font-bold text-xs tracking-wider text-cyan-300 flex items-center gap-1.5">
                     <span>CAR-GUARD-AI</span>
-                    <span class="text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-1.5 py-0.5 rounded mono">v2.6 EDGE-AI</span>
+                    <span class="text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-1.5 py-0.5 rounded mono">v2.7 2-WAY CLOUD</span>
                 </h1>
                 <p class="text-[10px] text-slate-400">Cross-Cabin Inside-Out YOLOv8 & Zero-Trust Cockpit</p>
             </div>
@@ -131,15 +131,15 @@
     </aside>
 
     <!-- RIGHT PANEL: ARCHITECTURE TELEMETRY & INTERACTIVE SCENE WIDGETS -->
-    <aside class="absolute top-20 right-4 w-80 z-20 flex flex-col gap-2.5 pointer-events-none">
+    <aside class="absolute top-20 right-4 w-80 z-20 flex flex-col gap-2 pointer-events-none">
         
         <div class="hud-panel rounded-xl p-3 pointer-events-auto">
-            <h2 class="text-xs font-bold uppercase tracking-wider text-cyan-400 mb-2 flex items-center justify-between">
+            <h2 class="text-xs font-bold uppercase tracking-wider text-cyan-400 mb-1.5 flex items-center justify-between">
                 <span><i class="fa-solid fa-microchip mr-1.5"></i> Edge Hardware Telemetry</span>
                 <span class="mono text-[10px] text-slate-400">Jetson Orin Nano</span>
             </h2>
             
-            <div class="space-y-1.5 mono text-[11px]">
+            <div class="space-y-1 mono text-[11px]">
                 <div class="flex justify-between items-center bg-slate-900/70 px-2.5 py-1 rounded border border-slate-800">
                     <span class="text-slate-400">Cross-Cabin Radar:</span>
                     <span id="tel-radar" class="text-emerald-400 font-semibold">ACTIVE (GREEN)</span>
@@ -175,7 +175,7 @@
             </div>
 
             <!-- Visual Toggle Controls -->
-            <div class="mt-2.5 pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
+            <div class="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between text-xs">
                 <label class="flex items-center space-x-2 cursor-pointer text-slate-300">
                     <input type="checkbox" id="toggle-cones" checked onchange="toggleFOVCones(this.checked)" class="accent-cyan-400 rounded">
                     <span>Show 3D FOV Cones</span>
@@ -190,16 +190,41 @@
         <!-- SCENE 6 (COCKPIT) EXCLUSIVE: Zero-Trust Keyhole Authentication Pad -->
         <div id="cockpit-auth-modal" class="hidden hud-panel rounded-xl p-3 pointer-events-auto border border-emerald-500/40"></div>
 
-        <!-- WhatsApp Cloud Telemetry Log -->
+        <!-- WhatsApp Cloud Telemetry & 2-Way Command Center -->
         <div id="telegram-panel" class="hud-panel rounded-xl p-3 pointer-events-auto">
             <div class="flex items-center justify-between mb-1.5">
                 <span class="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                    <i class="fa-brands fa-whatsapp text-base"></i> WhatsApp Cloud Telemetry
+                    <i class="fa-brands fa-whatsapp text-base"></i> 2-Way WhatsApp Cloud
                 </span>
-                <span class="mono text-[10px] text-emerald-400">SIM7600 4G LTE</span>
+                <span class="mono text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/40">
+                    <i class="fa-solid fa-satellite-dish mr-1"></i>RX/TX ACTIVE
+                </span>
             </div>
+
+            <!-- 2-Way Remote Command Bar (Works via Phone WhatsApp OR 1-Click Demo Trigger) -->
+            <div class="mb-2 bg-slate-900/90 p-1.5 rounded-lg border border-slate-800">
+                <div class="flex justify-between items-center mb-1 px-0.5">
+                    <span class="mono text-[9px] text-slate-400">REMOTE COMMANDS (PHONE / HUD):</span>
+                    <span class="mono text-[9px] text-cyan-300">919258121879</span>
+                </div>
+                <div class="grid grid-cols-4 gap-1 mono text-[10px]">
+                    <button onclick="triggerRemoteCommand('SNAP')" class="py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-200 border border-cyan-500/40 font-semibold transition" title="Capture & send live photo to WhatsApp">
+                        📸 SNAP
+                    </button>
+                    <button onclick="triggerRemoteCommand('LOCK')" class="py-1 rounded bg-rose-500/20 hover:bg-rose-500/40 text-rose-300 border border-rose-500/40 font-semibold transition" title="Engage 3-of-3 Immobilizer Deadlock">
+                        🔒 LOCK
+                    </button>
+                    <button onclick="triggerRemoteCommand('SIREN')" class="py-1 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 border border-amber-500/40 font-semibold transition" title="Trigger remote acoustic siren & strobe">
+                        🚨 SIREN
+                    </button>
+                    <button onclick="triggerRemoteCommand('RESET')" class="py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 border border-emerald-500/40 font-semibold transition" title="Silence alarm & reset to Standby">
+                        🔄 RESET
+                    </button>
+                </div>
+            </div>
+
             <div id="telegram-log" class="bg-slate-950/90 rounded-lg p-2 mono text-[11px] text-slate-300 h-24 overflow-y-auto space-y-1.5 border border-slate-800">
-                <div class="text-emerald-400">[SYSTEM] B-Pillar Cross-Cabin Optics calibrated.</div>
+                <div class="text-emerald-400">[SYSTEM] 2-Way WhatsApp Command Listener active (Send SNAP, LOCK, SIREN, RESET).</div>
             </div>
         </div>
 
