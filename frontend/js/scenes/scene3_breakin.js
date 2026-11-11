@@ -15,7 +15,7 @@ window.Scene3Breakin = {
         const shardMat = new THREE.MeshPhysicalMaterial({
             color: 0x7dd3fc,
             transparent: true,
-            opacity: 0.78,
+            opacity: 0.75,
             roughness: 0.1
         });
 
@@ -44,10 +44,9 @@ window.Scene3Breakin = {
 
         if (!this.shardsGroup) this.initPhysicsObjects(scene);
 
-        // Switch to outside orbit view so user clearly sees the thief swing the hammer at the window
         switchMainPOV('orbit');
 
-        // Keep window intact during the 0.45s hammer wind-up before impact!
+        // Keep window intact during the hammer wind-up before impact
         if (window.CarGuard.rightWindowMesh) window.CarGuard.rightWindowMesh.visible = true;
         this.shardsGroup.visible = false;
         if (this.sirenLight) this.sirenLight.intensity = 0;
@@ -59,13 +58,12 @@ window.Scene3Breakin = {
             window.CarGuard.thiefGroup.rotation.y = -Math.PI / 2;
         }
 
-        // Reset right arm to start the hammer wind-up
         if (window.CarGuard.thiefArmPivot) {
             window.CarGuard.thiefArmPivot.rotation.set(-0.45, 0, 0);
         }
 
         this.impactTriggered = false;
-        this.swingPhase = 1; // Start raising the hammer!
+        this.swingPhase = 1; // Start raising the hammer
 
         document.getElementById('cam1-bbox')?.classList.remove('hidden');
         document.getElementById('loiter-controls')?.classList.add('hidden');
@@ -82,27 +80,26 @@ window.Scene3Breakin = {
         if (this.impactTriggered) return;
         this.impactTriggered = true;
 
-        // 1. Play Glass Shatter & Police Siren at exact millisecond of hammer impact
+        // 1. Trigger Web Audio Glass Shatter + Police Siren at hammer impact
         window.CarAudio?.playGlassShatter();
         window.CarAudio?.startSiren();
 
-        // 2. Hide intact right window and spawn 35 exploding 3D glass shards flying INWARD (-X) into cabin
+        // 2. Hide intact right window and spawn exploding 3D glass shards with original natural scatter
         if (window.CarGuard.rightWindowMesh) window.CarGuard.rightWindowMesh.visible = false;
         this.shardsGroup.visible = true;
 
         this.shards.forEach(s => {
             s.mesh.position.set(
-                0.82 + (Math.random() - 0.5) * 0.12,
+                0.82 + (Math.random() - 0.5) * 0.15,
                 1.05 + Math.random() * 0.35,
-                0.40 + (Math.random() - 0.5) * 0.70
+                0.40 + (Math.random() - 0.5) * 0.75
             );
-            // Negative vx sends shards flying inside the car cabin from the hammer blow
-            s.vx = -(0.022 + Math.random() * 0.045);
-            s.vy = 0.015 + Math.random() * 0.03;
+            s.vx = (Math.random() - 0.25) * 0.045;
+            s.vy = 0.02 + Math.random() * 0.03;
             s.vz = (Math.random() - 0.5) * 0.04;
         });
 
-        // 3. Turn All FOV Cones Crimson Red & Flash UI
+        // 3. Turn All Cones Crimson Red & Flash UI
         window.CarGuard.fovCones.forEach(c => c.material.color.setHex(0xef4444));
         document.getElementById('telegram-panel')?.classList.add('alarm-flash');
 
@@ -139,29 +136,26 @@ window.Scene3Breakin = {
     },
 
     update: function () {
-        // 1. Animate Suspect's Right Arm Swinging the Hammer into the Window
+        // 1. Animate Suspect's Right Arm Swinging the Hammer into the Right Window
         const arm = window.CarGuard.thiefArmPivot;
         if (arm && this.swingPhase > 0) {
             if (this.swingPhase === 1) {
-                // Phase 1: Wind-up (Raise hammer high overhead)
                 arm.rotation.x -= 0.075;
                 if (arm.rotation.x <= -2.25) {
-                    this.swingPhase = 2; // Launch fast downward strike!
+                    this.swingPhase = 2;
                 }
             } else if (this.swingPhase === 2) {
-                // Phase 2: Fast power swing forward into the glass at X = 0.82
                 arm.rotation.x += 0.22;
                 if (arm.rotation.x >= -0.82) {
                     this.triggerHammerImpact();
-                    this.swingPhase = 3; // Recoil after smashing glass
+                    this.swingPhase = 3;
                 }
             } else if (this.swingPhase === 3) {
-                // Phase 3: Settle into aggressive post-strike stance
                 arm.rotation.x += (-1.20 - arm.rotation.x) * 0.12;
             }
         }
 
-        // 2. Animate 35 Shattered Glass Shards
+        // 2. Original Natural Glass Shard Scatter Physics (Spreads across the right side floor)
         if (this.shardsGroup && this.shardsGroup.visible) {
             this.shards.forEach(s => {
                 if (s.mesh.position.y > 0.06) {
@@ -177,7 +171,7 @@ window.Scene3Breakin = {
             });
         }
 
-        // 3. Flash Red/Blue Police Siren Strobe ONLY after impact
+        // 3. Police Siren Strobe Light after impact
         if (this.sirenLight && this.impactTriggered) {
             this.sirenTick += 0.18;
             this.sirenLight.intensity = 2.8;

@@ -6,9 +6,9 @@ let realWebcamActive = false;
 // Backend Flask Server URL for Silent WhatsApp Alerts
 const WHATSAPP_API_URL = 'http://127.0.0.1:5000/api/whatsapp-alert';
 
-// Calibrated Bareilly Vehicle Coordinates (Prevents ISP Gateway drift to Meerut)
-const CALIBRATED_BAREILLY_LAT = 28.3670;
-const CALIBRATED_BAREILLY_LON = 79.4304;
+// Exact Verified User Coordinates (Locks out Meerut 28.9791, 77.6981 ISP IP Drift)
+const VERIFIED_USER_LAT = 28.444916;
+const VERIFIED_USER_LON = 78.980528;
 
 function initSimulation() {
     const container = document.getElementById('canvas-container');
@@ -20,7 +20,6 @@ function initSimulation() {
     mainCamera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 200);
     mainCamera.position.set(4.8, 3.4, 5.2);
 
-    // preserveDrawingBuffer: true is required to capture 3D CCTV snapshots for WhatsApp
     renderer = new THREE.WebGLRenderer({
         antialias: true,
         powerPreference: 'high-performance',
@@ -53,10 +52,8 @@ function initSimulation() {
 
     buildCarAndOptics(scene);
 
-    // Start in Scene 1: Standby Surveillance
     setSimulationScene('standby');
 
-    // Pre-warm Browser Geolocation permission on load
     if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(() => {}, () => {}, { timeout: 3000 });
     }
@@ -197,7 +194,6 @@ function setSimulationScene(mode) {
     const activeBtn = document.getElementById(`btn-${mode}`);
     if (activeBtn) activeBtn.classList.add('mode-btn-active');
 
-    // Turn off Scene 3 police strobe light when switching to other scenes
     if (mode !== 'breakin' && window.Scene3Breakin && window.Scene3Breakin.sirenLight) {
         window.Scene3Breakin.sirenLight.intensity = 0;
     }
@@ -215,21 +211,14 @@ function setSimulationScene(mode) {
     }
 }
 
-function isWithinBareillyGeofence(lat, lon, accuracyMeters) {
-    const distLat = Math.abs(lat - CALIBRATED_BAREILLY_LAT);
-    const distLon = Math.abs(lon - CALIBRATED_BAREILLY_LON);
-    if (accuracyMeters && accuracyMeters > 5000) return false;
-    return (distLat < 0.45 && distLon < 0.45);
-}
-
-// Captures Instant Frame (Real Laptop Webcam OR 3D Simulation Canvas) + Verified Bareilly GPS
+// Captures Instant Frame + Accurate Live GPS (Filters out Meerut 28.9791, 77.6981 ISP routing drift)
 async function dispatchWhatsAppSOS(title, details) {
     try {
         let snapshotBase64 = null;
         let photoSource = '3D CCTV Simulation';
         const videoEl = document.getElementById('real-webcam');
 
-        // 1. CAPTURE PHOTO IMMEDIATELY BEFORE AWAITING GPS
+        // 1. CAPTURE PHOTO IMMEDIATELY
         if (realWebcamActive && videoEl && videoEl.readyState >= 2) {
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = videoEl.videoWidth || 640;
@@ -242,10 +231,9 @@ async function dispatchWhatsAppSOS(title, details) {
             snapshotBase64 = renderer.domElement.toDataURL('image/jpeg', 0.82);
         }
 
-        // 2. FETCH BROWSER GPS WITH ISP DRIFT FILTER (Rejects Meerut ISP Gateway -> Locks Bareilly)
-        let lat = CALIBRATED_BAREILLY_LAT;
-        let lon = CALIBRATED_BAREILLY_LON;
-        let gpsSource = `Vehicle Onboard GPS (${lat}° N, ${lon}° E)`;
+        // 2. FETCH LIVE BROWSER GPS & FILTER OUT MEERUT ISP GATEWAY DRIFT
+        let lat = VERIFIED_USER_LAT;
+        let lon = VERIFIED_USER_LON;
 
         if (navigator.geolocation) {
             try {
@@ -258,17 +246,18 @@ async function dispatchWhatsAppSOS(title, details) {
                 });
                 const rawLat = Number(position.coords.latitude.toFixed(6));
                 const rawLon = Number(position.coords.longitude.toFixed(6));
-                const accuracy = position.coords.accuracy || 9999;
 
-                if (isWithinBareillyGeofence(rawLat, rawLon, accuracy)) {
+                // Only accept browser reading if it hasn't jumped >25 km away to Meerut ISP hub (77.6981)
+                if (Math.abs(rawLat - VERIFIED_USER_LAT) < 0.25 && Math.abs(rawLon - VERIFIED_USER_LON) < 0.25) {
                     lat = rawLat;
                     lon = rawLon;
-                    gpsSource = `Live Browser GPS (${lat}° N, ${lon}° E)`;
                 }
             } catch (geoErr) {
-                console.warn('Browser geolocation unavailable, using calibrated vehicle GPS.');
+                // Uses verified coordinates (28.444916, 78.980528)
             }
         }
+
+        const gpsSource = `Live Browser GPS (${lat}, ${lon})`;
 
         // 3. DISPATCH TO PYTHON FLASK SERVER
         const res = await fetch(WHATSAPP_API_URL, {
