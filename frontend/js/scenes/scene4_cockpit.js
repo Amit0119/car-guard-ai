@@ -1,4 +1,4 @@
-// SCENE 4 (BUTTON 5): ZERO-TRUST COCKPIT HMI (DIRECT SEATED 3D DRIVER + PERSISTENT 3-OF-3 LOCK)
+// SCENE 4 (BUTTON 6): ZERO-TRUST COCKPIT HMI (DIRECT SEATED 3D DRIVER + PERSISTENT 3-OF-3 LOCK)
 window.Scene4Cockpit = {
     blinkVerified: false,
     fingerVerified: false,
@@ -21,27 +21,36 @@ window.Scene4Cockpit = {
     enter: function () {
         if (window.Scene2Loitering) window.Scene2Loitering.cleanup();
         if (window.Scene5Tamper) window.Scene5Tamper.cleanup();
+        if (window.Scene6TiltRelay) window.Scene6TiltRelay.cleanup();
         window.CarAudio?.stopSiren();
         this.stopLivenessPolling();
         this.cancelFingerprintHold();
 
-        if (window.CarGuard.carGroup) window.CarGuard.carGroup.rotation.y = 0;
+        if (window.CarGuard.carGroup) {
+            window.CarGuard.carGroup.rotation.set(0, 0, 0);
+            window.CarGuard.carGroup.position.set(0, 0, 0);
+        }
 
-        // Check system status, glass, radar AND optical tamper so 3-of-3 High-Alert Lock stays active after any breach
+        // Check system status, glass, radar, optical tamper AND IMU tilt so 3-of-3 Lock stays active after any breach
         const currentStatus = document.getElementById('system-status-text')?.innerText || '';
         const glassStatus = document.getElementById('tel-glass')?.innerText || '';
         const radarStatus = document.getElementById('tel-radar')?.innerText || '';
         const opticsStatus = document.getElementById('tel-optics')?.innerText || '';
+        const imuStatus = document.getElementById('tel-imu')?.innerText || '';
 
         if (
             currentStatus.includes('LOITERING') ||
             currentStatus.includes('BREAK-IN') ||
             currentStatus.includes('TAMPER') ||
+            currentStatus.includes('TILT') ||
+            currentStatus.includes('RELAY') ||
             currentStatus.includes('SOS') ||
             currentStatus.includes('HIGH-ALERT') ||
             glassStatus.includes('SHATTERED') ||
             radarStatus.includes('INTRUSION') ||
-            opticsStatus.includes('BLINDED')
+            opticsStatus.includes('BLINDED') ||
+            imuStatus.includes('BREACH') ||
+            imuStatus.includes('BLOCKED')
         ) {
             this.priorThreatDetected = true;
         } else {
@@ -69,7 +78,6 @@ window.Scene4Cockpit = {
         this.tamperAlertSent = false;
         window.CarGuard.ownerReachAmount = 0;
 
-        // Place .GLB Human directly seated inside the Driver Seat
         if (window.CarGuard.thiefGroup) {
             window.CarGuard.thiefGroup.position.set(0.36, -0.22, -0.02);
             window.CarGuard.thiefGroup.rotation.y = 0;
@@ -117,7 +125,7 @@ window.Scene4Cockpit = {
         this.startLivenessPolling();
 
         if (this.priorThreatDetected) {
-            logTelegram('⚠️ [HIGH-ALERT PROTOCOL] Prior perimeter/optical breach logged. All 3 factors (3-of-3) required.');
+            logTelegram('⚠️ [HIGH-ALERT PROTOCOL] Prior perimeter/optical/IMU breach logged. All 3 factors (3-of-3) required.');
         } else {
             logTelegram('⚡ [ADAPTIVE AUTH] Standard entry: Verify any 2 of 3 factors to disengage immobilizer.');
         }
@@ -167,7 +175,6 @@ window.Scene4Cockpit = {
                 <div id="cockpit-inline-notice" class="hidden"></div>
 
                 <div class="space-y-2">
-                    <!-- FACTOR 1: OPTICAL FACE ID + LIVENESS -->
                     <div class="p-2 rounded-lg bg-slate-900/90 border border-slate-800">
                         <div class="flex items-center justify-between">
                             <div>
@@ -180,7 +187,6 @@ window.Scene4Cockpit = {
                         </div>
                     </div>
 
-                    <!-- FACTOR 2: 1.5s CAPACITIVE BIOMETRIC SENSOR -->
                     <div class="p-2 rounded-lg bg-slate-900/90 border border-slate-800">
                         <div class="flex items-center justify-between mb-1">
                             <div>
@@ -202,7 +208,6 @@ window.Scene4Cockpit = {
                         </div>
                     </div>
 
-                    <!-- FACTOR 3: CRYPTOGRAPHIC PASSCODE -->
                     <div class="p-2 rounded-lg bg-slate-900/90 border border-slate-800 flex items-center justify-between">
                         <div>
                             <div class="font-semibold text-slate-200">3. Cryptographic Passcode</div>
@@ -217,7 +222,6 @@ window.Scene4Cockpit = {
                     </div>
                 </div>
 
-                <!-- IGNITION SYSTEM BUTTON -->
                 <div id="start-engine-box" class="hidden mt-2.5 pt-2 border-t border-slate-800">
                     <button id="btn-start-engine" onclick="window.Scene4Cockpit.igniteEngine()" class="w-full py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-slate-950 font-black tracking-wider text-xs shadow-lg hover:brightness-110">
                         <i class="fa-solid fa-power-off mr-1.5"></i> ENGAGE IGNITION SYSTEM
@@ -332,7 +336,6 @@ window.Scene4Cockpit = {
                     btnLbl.innerText = 'ID Locked (Update)';
                 }
 
-                // Check if physical laptop webcam is covered by hand/cloth during Cockpit Auth
                 if (data.camera_tampered) {
                     document.getElementById('cam3-tamper-overlay')?.classList.remove('hidden');
                     lbl.className = 'text-[10px] text-rose-400 font-bold mono animate-pulse';
@@ -398,7 +401,6 @@ window.Scene4Cockpit = {
                 }
             }
         } catch (e) {
-            // Silent ignore when server is unreachable
         } finally {
             this.pollBusy = false;
         }
