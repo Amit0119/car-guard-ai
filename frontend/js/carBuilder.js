@@ -75,7 +75,6 @@ window.CarAudio = {
         gain.connect(this.ctx.destination);
         noise.start(now);
 
-        // High-pitched falling glass shards tinkle
         [2400, 3100, 3800, 4400, 2900, 4900].forEach((freq, idx) => {
             const osc = this.ctx.createOscillator();
             const sGain = this.ctx.createGain();
@@ -166,7 +165,7 @@ window.CarAudio = {
     }
 };
 
-// Global namespace for Car-Guard-AI 3D Objects & Cameras
+// Global namespace for Car-Guard-AI 3D Objects, Rigged GLB Human & Cameras
 window.CarGuard = {
     carGroup: null,
     interiorRigGroup: null,
@@ -174,8 +173,10 @@ window.CarGuard = {
     fallbackBodyGroup: null,
     externalCarModel: null,
     externalCarWrapper: null,
+    driverDoorMesh: null,
     roofMesh: null,
     rightWindowMesh: null,
+    leftWindowMesh: null,
     servoShieldMesh: null,
     fingerprintMesh: null,
     keySlotMesh: null,
@@ -183,13 +184,25 @@ window.CarGuard = {
     headlightsGroup: null,
     fovCones: [],
     cameras: {
-        cam1: null, // Left B-Pillar -> Right Front Door Window
-        cam2: null, // Right B-Pillar -> Left Front Door Window
-        cam3: null  // Cockpit POV -> Real Steering Wheel + Center Console Key Safe & Fingerprint
+        cam1: null,
+        cam2: null,
+        cam3: null
     },
+    // Human GLB Character & Rigging State
     thiefGroup: null,
     thiefArmPivot: null,
     hammerGroup: null,
+    suspectBBox: null,
+    humanGLBModel: null,
+    humanMixer: null,
+    humanActions: {},
+    activeHumanAction: null,
+    humanBones: {},
+    humanRole: 'thief',       // 'thief' (Red BBox + Hammer) or 'owner' (Driver Seat)
+    humanPose: 'standing',    // 'standing', 'walking', 'sitting'
+    ownerReachAmount: 0,
+    lastThiefPos: new THREE.Vector3(),
+
     carDimensions: { width: 1.85, height: 1.55, length: 4.6 },
     calib: {
         carRotY: Math.PI,
@@ -279,11 +292,14 @@ function buildCarAndOptics(scene) {
         }
     );
 
-    // 3. Create Articulated 3D Suspect Model with Iron Hammer Outside Front Right Door
+    // 3. Create & Load Real .GLB Human Character ('assets/human.glb' with CDN fallback)
     createSuspectModel(scene);
 
     // 4. Inject Live 3D Camera & Key Safe Calibration UI
     injectCalibrationUI();
+
+    // 5. Start 60FPS Skeleton & Animation Mixer Loop for the .GLB Human
+    startHumanAnimationLoop();
 }
 
 function applyCarTransformAndRebuild() {
@@ -373,17 +389,25 @@ function rebuildCalibrationRig() {
     const frontWindowZ = 0.40;
     const windowCenterY = H * 0.72;
 
-    // Right Front Window Plane (for Scene 3 Break-In Shatter)
-    const glassMat = new THREE.MeshPhysicalMaterial({
-        color: 0x38bdf8, transparent: true, opacity: 0.24, roughness: 0.1
+    // Right & Left Front Window Planes (for Scene 3 Dual-Window Break-In Shatter)
+    const glassMatRight = new THREE.MeshPhysicalMaterial({
+        color: 0x38bdf8, transparent: true, opacity: 0.24, roughness: 0.1, side: THREE.DoubleSide
     });
-    const rightWindow = new THREE.Mesh(new THREE.PlaneGeometry(0.85, H * 0.25), glassMat);
+    const rightWindow = new THREE.Mesh(new THREE.PlaneGeometry(0.85, H * 0.25), glassMatRight);
     rightWindow.position.set(hw * 0.86, windowCenterY, frontWindowZ);
     rightWindow.rotation.y = Math.PI / 2;
     window.CarGuard.rightWindowMesh = rightWindow;
     rigGroup.add(rightWindow);
 
-    // Realistic Cabin & Dashboard Spot Lighting
+    const glassMatLeft = new THREE.MeshPhysicalMaterial({
+        color: 0x38bdf8, transparent: true, opacity: 0.24, roughness: 0.1, side: THREE.DoubleSide
+    });
+    const leftWindow = new THREE.Mesh(new THREE.PlaneGeometry(0.85, H * 0.25), glassMatLeft);
+    leftWindow.position.set(-hw * 0.86, windowCenterY, frontWindowZ);
+    leftWindow.rotation.y = Math.PI / 2;
+    window.CarGuard.leftWindowMesh = leftWindow;
+    rigGroup.add(leftWindow);
+
     const cabinLight = new THREE.PointLight(0xffffff, 2.4, 5.5);
     cabinLight.position.set(0, H * 0.85, 0.10);
     rigGroup.add(cabinLight);
@@ -392,7 +416,7 @@ function rebuildCalibrationRig() {
     podLight.position.set(keySafeX, keySafeY + 0.15, keySafeZ - 0.20);
     rigGroup.add(podLight);
 
-    // --- OEM SUPERCAR IGNITION POD (SLEEK FLUSH MOUNT + FIGHTER-JET FLIP COVER) ---
+    // --- OEM SUPERCAR IGNITION POD ---
     const ignitionModuleGroup = new THREE.Group();
     ignitionModuleGroup.position.set(keySafeX, keySafeY, keySafeZ);
     ignitionModuleGroup.rotation.x = -0.22;
@@ -612,105 +636,61 @@ function rebuildCalibrationRig() {
     window.CarGuard.fovCones.push(fovCone1, fovCone2, fovCone3);
 }
 
-// ARTICULATED 3D INTRUDER MODEL WITH IRON SLEDGEHAMMER / BREAKER TOOL
+// LOADS REAL RIGGED .GLB HUMAN CHARACTER ('assets/human.glb' OR THREE.JS CDN) AT EXACT 1.65M SCALE
 function createSuspectModel(scene) {
     const thief = new THREE.Group();
 
-    const hoodieMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.75 });
-    const vestMat = new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.5 });
-    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.85 });
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xd6a384, roughness: 0.6 });
-    const maskMat = new THREE.MeshStandardMaterial({ color: 0x090d16, roughness: 0.8 });
+    const charLight = new THREE.PointLight(0xffffff, 1.6, 4.0);
+    charLight.position.set(0, 1.9, 0.6);
+    thief.add(charLight);
 
-    // 1. Legs & Boots
-    const legGeo = new THREE.CylinderGeometry(0.10, 0.085, 0.78, 14);
-    const leftLeg = new THREE.Mesh(legGeo, pantsMat);
-    leftLeg.position.set(-0.13, 0.39, 0);
-    thief.add(leftLeg);
+    // 1. Procedural Fallback Group (Hidden immediately once human.glb loads)
+    const fallbackHuman = new THREE.Group();
+    const hoodieMat = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.5 });
+    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.18, 1.0, 14), hoodieMat);
+    torso.position.y = 0.72;
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 14), hoodieMat);
+    head.position.y = 1.45;
+    fallbackHuman.add(torso, head);
+    thief.add(fallbackHuman);
 
-    const rightLeg = new THREE.Mesh(legGeo, pantsMat);
-    rightLeg.position.set(0.13, 0.39, 0);
-    thief.add(rightLeg);
-
-    // 2. Torso & High-Contrast Tactical Vest (Visible in CAM-01)
-    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.21, 0.76, 16), hoodieMat);
-    torso.position.y = 1.12;
-    torso.castShadow = true;
-    thief.add(torso);
-
-    const chestBand = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.23, 0.32, 16), vestMat);
-    chestBand.position.y = 1.18;
-    thief.add(chestBand);
-
-    // 3. Head + Ski Mask Balaclava + Eye Slit
-    const headGroup = new THREE.Group();
-    headGroup.position.y = 1.66;
-
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.185, 16, 16), maskMat);
-    headGroup.add(head);
-
-    const eyeBand = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.055, 0.14), skinMat);
-    eyeBand.position.set(0, 0.02, 0.10);
-    headGroup.add(eyeBand);
-    thief.add(headGroup);
-
-    // 4. Left Arm (Bracing posture)
-    const leftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.065, 0.60, 12), hoodieMat);
-    leftArm.position.set(-0.32, 1.14, 0.10);
-    leftArm.rotation.z = 0.18;
-    leftArm.rotation.x = -0.35;
-    thief.add(leftArm);
-
-    // 5. Articulated Right Shoulder Pivot + Arm + Heavy Iron Hammer
+    // 2. Virtual Arm Pivot Controller (Scene 3 animates thiefArmPivot.rotation.x for Hammer Swing)
     const rightArmPivot = new THREE.Group();
-    rightArmPivot.position.set(0.32, 1.40, 0.0); // Shoulder joint height
-
-    const rightArmMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.068, 0.58, 12), hoodieMat);
-    rightArmMesh.position.set(0, -0.26, 0);
-    rightArmPivot.add(rightArmMesh);
-
-    const rightHand = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 12), skinMat);
-    rightHand.position.set(0, -0.56, 0);
-    rightArmPivot.add(rightHand);
-
-    // 3D Iron Sledgehammer / Window Breaker in Right Hand
-    const hammerGroup = new THREE.Group();
-    hammerGroup.position.set(0, -0.56, 0.04);
-
-    // Wooden Handle Shaft extending forward (+Z in local suspect space)
-    const handleMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.65 });
-    const handleShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.028, 0.65, 12), handleMat);
-    handleShaft.rotation.x = Math.PI / 2;
-    handleShaft.position.z = 0.26;
-    hammerGroup.add(handleShaft);
-
-    // Forged Steel Hammerhead
-    const steelMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, roughness: 0.2 });
-    const hammerHead = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.26, 0.12), steelMat);
-    hammerHead.position.set(0, 0, 0.55);
-    hammerGroup.add(hammerHead);
-
-    // Red Hardened Strike Spike (Points down/forward when swung)
-    const spikeMat = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.6, roughness: 0.3 });
-    const strikeSpike = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.12, 10), spikeMat);
-    strikeSpike.rotation.x = Math.PI;
-    strikeSpike.position.set(0, -0.18, 0.55);
-    hammerGroup.add(strikeSpike);
-
-    rightArmPivot.add(hammerGroup);
-    // Default ready pose: holding hammer slightly raised
-    rightArmPivot.rotation.x = -0.55;
+    rightArmPivot.position.set(-0.20, 1.32, 0.0);
+    rightArmPivot.rotation.x = -0.45;
     thief.add(rightArmPivot);
 
-    // 6. Red YOLOv8 3D Bounding Box Wireframe
+    // 3. 3D Iron Sledgehammer / Window Breaker Tool
+    const hammerGroup = new THREE.Group();
+    hammerGroup.position.set(-0.22, 1.05, 0.25);
+
+    const handleMat = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.5 });
+    const handleShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.026, 0.58, 12), handleMat);
+    handleShaft.rotation.x = Math.PI / 2;
+    handleShaft.position.z = 0.22;
+    hammerGroup.add(handleShaft);
+
+    const steelMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, metalness: 0.9, roughness: 0.15 });
+    const hammerHead = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.22, 0.10), steelMat);
+    hammerHead.position.set(0, 0, 0.48);
+    hammerGroup.add(hammerHead);
+
+    const spikeMat = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.5, roughness: 0.2 });
+    const strikeSpike = new THREE.Mesh(new THREE.ConeGeometry(0.048, 0.11, 10), spikeMat);
+    strikeSpike.rotation.x = Math.PI;
+    strikeSpike.position.set(0, -0.15, 0.48);
+    hammerGroup.add(strikeSpike);
+
+    thief.add(hammerGroup);
+
+    // 4. Red YOLOv8 3D Bounding Box Wireframe
     const bbox = new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(0.82, 1.90, 0.82)),
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(0.75, 1.78, 0.75)),
         new THREE.LineBasicMaterial({ color: 0xff0044 })
     );
-    bbox.position.y = 0.95;
+    bbox.position.y = 0.89;
     thief.add(bbox);
 
-    // Face -X direction directly towards the car's Front Right Window (X = 0.82, Z = 0.40)
     thief.position.set(1.95, 0, 0.40);
     thief.rotation.y = -Math.PI / 2;
     thief.visible = false;
@@ -718,7 +698,187 @@ function createSuspectModel(scene) {
     window.CarGuard.thiefGroup = thief;
     window.CarGuard.thiefArmPivot = rightArmPivot;
     window.CarGuard.hammerGroup = hammerGroup;
+    window.CarGuard.suspectBBox = bbox;
     scene.add(thief);
+
+    // 5. Load Real Articulated .GLB Human Character
+    const loader = new THREE.GLTFLoader();
+
+    function onHumanLoaded(gltf) {
+        const rawHuman = gltf.scene;
+        fallbackHuman.visible = false;
+
+        rawHuman.scale.set(0.92, 0.92, 0.92);
+        rawHuman.position.set(0, 0, 0);
+
+        const bones = {};
+        rawHuman.traverse(function (node) {
+            if (node.isMesh) {
+                node.castShadow = true;
+                node.receiveShadow = true;
+                node.frustumCulled = false;
+                if (node.material) {
+                    node.material = node.material.clone();
+                    node.material.roughness = 0.35;
+                    node.material.metalness = 0.25;
+                }
+            }
+            if (node.isBone) {
+                const n = node.name.toLowerCase();
+                if (n.endsWith('hips')) bones.hips = node;
+                else if (n.endsWith('spine') || n.endsWith('spine1')) bones.spine = node;
+                else if (n.endsWith('rightarm')) bones.rightArm = node;
+                else if (n.endsWith('rightforearm')) bones.rightForeArm = node;
+                else if (n.endsWith('righthand')) bones.rightHand = node;
+                else if (n.endsWith('leftarm')) bones.leftArm = node;
+                else if (n.endsWith('leftforearm')) bones.leftForeArm = node;
+                else if (n.endsWith('leftupleg')) bones.leftUpLeg = node;
+                else if (n.endsWith('rightupleg')) bones.rightUpLeg = node;
+                else if (n.endsWith('leftleg')) bones.leftLeg = node;
+                else if (n.endsWith('rightleg')) bones.rightLeg = node;
+            }
+        });
+
+        window.CarGuard.humanGLBModel = rawHuman;
+        window.CarGuard.humanBones = bones;
+        thief.add(rawHuman);
+
+        if (gltf.animations && gltf.animations.length > 0) {
+            const mixer = new THREE.AnimationMixer(rawHuman);
+            window.CarGuard.humanMixer = mixer;
+
+            gltf.animations.forEach(clip => {
+                const action = mixer.clipAction(clip);
+                window.CarGuard.humanActions[clip.name.toLowerCase()] = action;
+            });
+
+            playHumanClip('idle');
+        }
+
+        logTelegram('[3D CHARACTER READY] 1.65m Articulated .GLB Human & Skeletal Rig calibrated.');
+    }
+
+    loader.load(
+        'assets/human.glb',
+        onHumanLoaded,
+        undefined,
+        function () {
+            loader.load(
+                'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/Xbot.glb',
+                onHumanLoaded
+            );
+        }
+    );
+}
+
+function playHumanClip(name) {
+    const actions = window.CarGuard.humanActions;
+    if (!actions) return;
+    const target = actions[name] || actions['idle'];
+    if (!target || window.CarGuard.activeHumanAction === target) return;
+
+    if (window.CarGuard.activeHumanAction) {
+        window.CarGuard.activeHumanAction.fadeOut(0.2);
+    }
+    target.reset().fadeIn(0.2).play();
+    window.CarGuard.activeHumanAction = target;
+}
+
+function pitchBoneInCharSpace(bone, charRoot, angleRad) {
+    if (!bone || !bone.parent || !charRoot) return;
+    const worldAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(
+        charRoot.getWorldQuaternion(new THREE.Quaternion())
+    );
+    const parentWorldQuat = bone.parent.getWorldQuaternion(new THREE.Quaternion());
+    const localAxis = worldAxis.applyQuaternion(parentWorldQuat.invert()).normalize();
+    const q = new THREE.Quaternion().setFromAxisAngle(localAxis, angleRad);
+    bone.quaternion.premultiply(q);
+}
+
+window.setHumanCharacterState = function (role, pose) {
+    window.CarGuard.humanRole = role;
+    window.CarGuard.humanPose = pose;
+
+    if (window.CarGuard.hammerGroup) {
+        window.CarGuard.hammerGroup.visible = (role === 'thief');
+    }
+    if (window.CarGuard.suspectBBox) {
+        window.CarGuard.suspectBBox.visible = (role === 'thief');
+    }
+
+    if (pose === 'walking') {
+        playHumanClip('walk');
+    } else {
+        playHumanClip('idle');
+    }
+};
+
+function startHumanAnimationLoop() {
+    const clock = new THREE.Clock();
+
+    function updateHumanFrame() {
+        requestAnimationFrame(updateHumanFrame);
+
+        const dt = Math.min(clock.getDelta(), 0.1);
+        const thief = window.CarGuard.thiefGroup;
+        if (!thief || !thief.visible) return;
+
+        const distMoved = thief.position.distanceTo(window.CarGuard.lastThiefPos);
+        window.CarGuard.lastThiefPos.copy(thief.position);
+
+        if (window.CarGuard.humanPose !== 'sitting') {
+            if (distMoved > 0.0015) {
+                playHumanClip('walk');
+            } else {
+                playHumanClip('idle');
+            }
+        } else {
+            playHumanClip('idle');
+        }
+
+        if (window.CarGuard.humanMixer) {
+            window.CarGuard.humanMixer.update(dt);
+        }
+
+        const bones = window.CarGuard.humanBones;
+        const armPivot = window.CarGuard.thiefArmPivot;
+
+        if (window.CarGuard.humanGLBModel && bones.rightArm) {
+            if (window.CarGuard.humanRole === 'thief' && armPivot) {
+                const swingPitch = armPivot.rotation.x + 0.35;
+                pitchBoneInCharSpace(bones.rightArm, thief, swingPitch);
+                if (bones.rightForeArm) {
+                    pitchBoneInCharSpace(bones.rightForeArm, thief, -0.35);
+                }
+
+                if (bones.rightHand && window.CarGuard.hammerGroup) {
+                    window.CarGuard.humanGLBModel.updateMatrixWorld(true);
+                    const handWorld = new THREE.Vector3();
+                    bones.rightHand.getWorldPosition(handWorld);
+                    thief.worldToLocal(handWorld);
+                    window.CarGuard.hammerGroup.position.copy(handWorld);
+                    window.CarGuard.hammerGroup.rotation.set(armPivot.rotation.x + 0.55, 0, 0);
+                }
+            } else if (window.CarGuard.humanPose === 'sitting') {
+                pitchBoneInCharSpace(bones.leftUpLeg, thief, -1.38);
+                pitchBoneInCharSpace(bones.rightUpLeg, thief, -1.38);
+                pitchBoneInCharSpace(bones.leftLeg, thief, 1.42);
+                pitchBoneInCharSpace(bones.rightLeg, thief, 1.42);
+
+                if (bones.leftArm) {
+                    pitchBoneInCharSpace(bones.leftArm, thief, -0.78);
+                }
+
+                const reach = window.CarGuard.ownerReachAmount || 0;
+                pitchBoneInCharSpace(bones.rightArm, thief, -0.65 - reach * 0.55);
+                if (bones.rightForeArm) {
+                    pitchBoneInCharSpace(bones.rightForeArm, thief, -0.30 - reach * 0.25);
+                }
+            }
+        }
+    }
+
+    updateHumanFrame();
 }
 
 function injectCalibrationUI() {

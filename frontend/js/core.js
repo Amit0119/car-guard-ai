@@ -211,24 +211,26 @@ function setSimulationScene(mode) {
     }
 }
 
-// Captures Instant Frame + Accurate Live GPS (Filters out Meerut 28.9791, 77.6981 ISP routing drift)
+// Captures Fast 640x360 Compressed Snapshot + Accurate Live GPS
 async function dispatchWhatsAppSOS(title, details) {
     try {
         let snapshotBase64 = null;
         let photoSource = '3D CCTV Simulation';
         const videoEl = document.getElementById('real-webcam');
 
-        // 1. CAPTURE PHOTO IMMEDIATELY
+        // 1. CAPTURE & DOWNSCALE TO 640x360 (~22 KB) FOR INSTANT UPLOAD
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = 640;
+        tempCanvas.height = 360;
+        const ctx = tempCanvas.getContext('2d');
+
         if (realWebcamActive && videoEl && videoEl.readyState >= 2) {
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = videoEl.videoWidth || 640;
-            tempCanvas.height = videoEl.videoHeight || 480;
-            const ctx = tempCanvas.getContext('2d');
             ctx.drawImage(videoEl, 0, 0, tempCanvas.width, tempCanvas.height);
-            snapshotBase64 = tempCanvas.toDataURL('image/jpeg', 0.85);
+            snapshotBase64 = tempCanvas.toDataURL('image/jpeg', 0.75);
             photoSource = 'Physical Laptop Webcam';
         } else if (renderer && renderer.domElement) {
-            snapshotBase64 = renderer.domElement.toDataURL('image/jpeg', 0.82);
+            ctx.drawImage(renderer.domElement, 0, 0, tempCanvas.width, tempCanvas.height);
+            snapshotBase64 = tempCanvas.toDataURL('image/jpeg', 0.75);
         }
 
         // 2. FETCH LIVE BROWSER GPS & FILTER OUT MEERUT ISP GATEWAY DRIFT
@@ -247,7 +249,6 @@ async function dispatchWhatsAppSOS(title, details) {
                 const rawLat = Number(position.coords.latitude.toFixed(6));
                 const rawLon = Number(position.coords.longitude.toFixed(6));
 
-                // Only accept browser reading if it hasn't jumped >25 km away to Meerut ISP hub (77.6981)
                 if (Math.abs(rawLat - VERIFIED_USER_LAT) < 0.25 && Math.abs(rawLon - VERIFIED_USER_LON) < 0.25) {
                     lat = rawLat;
                     lon = rawLon;
@@ -298,7 +299,7 @@ function logTelegram(msg) {
         setTimeout(() => {
             dispatchWhatsAppSOS(
                 'PRE-EMPTIVE LOITERING ALERT (5 MIN)',
-                'YOLOv8 tracked suspect outside Front Right Door for >5 minutes (CAM-01).'
+                'YOLOv8 tracked suspect circling vehicle perimeter for >5 minutes (CAM-01 & CAM-02).'
             );
         }, 250);
     }
