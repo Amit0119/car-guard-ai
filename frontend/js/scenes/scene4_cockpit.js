@@ -1,4 +1,4 @@
-// SCENE 4: ZERO-TRUST COCKPIT HMI (PROTECTED FACE ENROLLMENT + 2-BLINK LIVENESS + 1.5s HOLD FINGERPRINT + PASSCODE)
+// SCENE 4: ZERO-TRUST COCKPIT HMI (DIRECT SEATED 3D DRIVER + PERSISTENT 3-OF-3 LOCK)
 window.Scene4Cockpit = {
     blinkVerified: false,
     fingerVerified: false,
@@ -25,8 +25,19 @@ window.Scene4Cockpit = {
 
         if (window.CarGuard.carGroup) window.CarGuard.carGroup.rotation.y = 0;
 
+        // Check system status AND glass/radar telemetry so 3-of-3 High-Alert Lock never resets on repeated Scene 4 clicks
         const currentStatus = document.getElementById('system-status-text')?.innerText || '';
-        if (currentStatus.includes('LOITERING') || currentStatus.includes('BREAK-IN')) {
+        const glassStatus = document.getElementById('tel-glass')?.innerText || '';
+        const radarStatus = document.getElementById('tel-radar')?.innerText || '';
+
+        if (
+            currentStatus.includes('LOITERING') ||
+            currentStatus.includes('BREAK-IN') ||
+            currentStatus.includes('SOS') ||
+            currentStatus.includes('HIGH-ALERT') ||
+            glassStatus.includes('SHATTERED') ||
+            radarStatus.includes('INTRUSION')
+        ) {
             this.priorThreatDetected = true;
         } else {
             this.priorThreatDetected = false;
@@ -34,7 +45,6 @@ window.Scene4Cockpit = {
 
         switchMainPOV('cockpit');
 
-        if (window.CarGuard.thiefGroup) window.CarGuard.thiefGroup.visible = false;
         document.getElementById('cam1-bbox')?.classList.add('hidden');
         document.getElementById('loiter-controls')?.classList.add('hidden');
         document.getElementById('telegram-panel')?.classList.remove('alarm-flash');
@@ -51,6 +61,17 @@ window.Scene4Cockpit = {
         this.targetShieldAngle = 0;
         this.intruderFrames = 0;
         this.intruderAlertSent = false;
+        window.CarGuard.ownerReachAmount = 0;
+
+        // Place .GLB Human directly seated inside the Driver Seat (no walking through closed doors)
+        if (window.CarGuard.thiefGroup) {
+            window.CarGuard.thiefGroup.position.set(0.36, -0.22, -0.02);
+            window.CarGuard.thiefGroup.rotation.y = 0;
+            window.CarGuard.thiefGroup.visible = false; // Hidden in cockpit POV, visible in 3D Orbit POV
+        }
+        if (typeof window.setHumanCharacterState === 'function') {
+            window.setHumanCharacterState('owner', 'sitting');
+        }
 
         if (window.CarGuard.servoShieldMesh) {
             window.CarGuard.servoShieldMesh.rotation.x = 0;
@@ -377,6 +398,8 @@ window.Scene4Cockpit = {
         if (this.fingerVerified || this.fpHoldInterval) return;
 
         this.fpHoldProgress = 0;
+        window.CarGuard.ownerReachAmount = 1.0;
+
         const bar = document.getElementById('fp-progress-bar');
         const lbl = document.getElementById('fp-status-lbl');
         if (lbl) {
@@ -402,6 +425,7 @@ window.Scene4Cockpit = {
 
     cancelFingerprintHold: function () {
         if (this.fingerVerified) return;
+        window.CarGuard.ownerReachAmount = 0.0;
         if (this.fpHoldInterval) {
             clearInterval(this.fpHoldInterval);
             this.fpHoldInterval = null;
@@ -422,6 +446,7 @@ window.Scene4Cockpit = {
     verifyFingerprint: function () {
         if (this.fingerVerified) return;
         this.fingerVerified = true;
+        window.CarGuard.ownerReachAmount = 0.4;
         window.CarAudio?.playBeep(1180, 0.14, 'sine');
 
         const btn = document.getElementById('btn-auth-finger');
@@ -479,7 +504,7 @@ window.Scene4Cockpit = {
         if (banner && !this.priorThreatDetected) {
             banner.innerHTML = `<div class="mb-2 px-2.5 py-1 rounded bg-cyan-500/15 border border-cyan-500/40 text-[10px] text-cyan-300 font-semibold flex items-center justify-between">
                 <span><i class="fa-solid fa-bolt mr-1"></i>ADAPTIVE AUTH: ANY 2-OF-3 UNLOCKS</span>
-                <span class="mono">${passedCount} / 2 VERIFIED</span>
+                <span class="mono">${Math.min(passedCount, 2)} / 2 VERIFIED</span>
             </div>`;
         }
 
@@ -502,6 +527,7 @@ window.Scene4Cockpit = {
         if (!this.shieldUnlocked || this.engineStarted) return;
         this.engineStarted = true;
         this.keyTurning = true;
+        window.CarGuard.ownerReachAmount = 1.0;
 
         if (window.CarGuard.keyMesh) {
             window.CarGuard.keyMesh.visible = true;
@@ -531,6 +557,12 @@ window.Scene4Cockpit = {
     },
 
     update: function () {
+        // Show the seated 3D driver when viewing from outside (3D Orbit), hide in Cockpit POV so it never blocks CAM-03
+        const driver = window.CarGuard.thiefGroup;
+        if (driver) {
+            driver.visible = (activeMainPOV !== 'cockpit');
+        }
+
         if (window.CarGuard.servoShieldMesh) {
             const currentRx = window.CarGuard.servoShieldMesh.rotation.x;
             window.CarGuard.servoShieldMesh.rotation.x += (this.targetShieldAngle - currentRx) * 0.12;
@@ -548,7 +580,6 @@ window.Scene4Cockpit = {
     }
 };
 
-// Auto-update legacy Telegram labels in DOM to WhatsApp Cloud Telemetry
 window.addEventListener('DOMContentLoaded', () => {
     const panel = document.getElementById('telegram-panel');
     if (panel) {
