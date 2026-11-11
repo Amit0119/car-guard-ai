@@ -3,15 +3,21 @@ let activeMainPOV = 'orbit';
 let currentSceneController = null;
 let realWebcamActive = false;
 
-// Backend Flask Server URL for Silent WhatsApp Alerts
 const WHATSAPP_API_URL = 'http://127.0.0.1:5000/api/whatsapp-alert';
-
-// Exact Verified User Coordinates (Locks out Meerut 28.9791, 77.6981 ISP IP Drift)
 const VERIFIED_USER_LAT = 28.444916;
 const VERIFIED_USER_LON = 78.980528;
 
+// Global error catcher so any JS issue prints visibly into the Telemetry Log Box
+window.addEventListener('error', function (e) {
+    appendRawLog(`<span class="text-rose-400 font-bold">⚠️ [JS ERROR] ${e.message} (${e.filename?.split('/').pop()}:${e.lineno})</span>`);
+});
+
 function initSimulation() {
     const container = document.getElementById('canvas-container');
+    if (!container) return;
+
+    // Clear any duplicate canvas on hot reload
+    container.innerHTML = '';
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x050811);
@@ -50,21 +56,30 @@ function initSimulation() {
     const grid = new THREE.GridHelper(40, 40, 0x0284c7, 0x1e293b);
     scene.add(grid);
 
-    buildCarAndOptics(scene);
+    // Start 60FPS render loop FIRST so the 3D viewport is never black
+    window.addEventListener('resize', onWindowResize);
+    animate();
+
+    try {
+        if (typeof buildCarAndOptics === 'function') {
+            buildCarAndOptics(scene);
+        } else {
+            appendRawLog('<span class="text-rose-400 font-bold">⚠️ [ERROR] carBuilder.js failed to load!</span>');
+        }
+    } catch (err) {
+        appendRawLog(`<span class="text-rose-400 font-bold">⚠️ [BUILD ERROR] ${err.message}</span>`);
+    }
 
     setSimulationScene('standby');
 
     if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(() => {}, () => {}, { timeout: 3000 });
     }
-
-    window.addEventListener('resize', onWindowResize);
-    animate();
 }
 
 function renderSubViewport(cam, domElementId, showCones) {
     const el = document.getElementById(domElementId);
-    if (!el || !cam) return;
+    if (!el || !cam || !window.CarGuard) return;
 
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
@@ -88,38 +103,47 @@ function renderSubViewport(cam, domElementId, showCones) {
 
 function animate() {
     requestAnimationFrame(animate);
-    orbitControls.update();
+    if (!renderer || !scene || !mainCamera) return;
 
-    if (currentSceneController && typeof currentSceneController.update === 'function') {
-        currentSceneController.update();
-    }
+    if (orbitControls) orbitControls.update();
+
+    try {
+        if (currentSceneController && typeof currentSceneController.update === 'function') {
+            currentSceneController.update();
+        }
+    } catch (err) {}
 
     const conesCheckbox = document.getElementById('toggle-cones');
     const conesUserEnabled = conesCheckbox ? conesCheckbox.checked : true;
+    const cones = window.CarGuard?.fovCones || [];
 
     // PASS 1: Main Full-Screen View
-    window.CarGuard.fovCones.forEach(c => (c.visible = conesUserEnabled));
+    cones.forEach(c => (c.visible = conesUserEnabled));
     renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
     renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
     renderer.setScissorTest(true);
 
     let activeCam = mainCamera;
-    if (activeMainPOV === 'cam1') activeCam = window.CarGuard.cameras.cam1;
-    else if (activeMainPOV === 'cam2') activeCam = window.CarGuard.cameras.cam2;
-    else if (activeMainPOV === 'cockpit') activeCam = window.CarGuard.cameras.cam3;
+    if (window.CarGuard && window.CarGuard.cameras) {
+        if (activeMainPOV === 'cam1' && window.CarGuard.cameras.cam1) activeCam = window.CarGuard.cameras.cam1;
+        else if (activeMainPOV === 'cam2' && window.CarGuard.cameras.cam2) activeCam = window.CarGuard.cameras.cam2;
+        else if (activeMainPOV === 'cockpit' && window.CarGuard.cameras.cam3) activeCam = window.CarGuard.cameras.cam3;
+    }
 
     activeCam.aspect = window.innerWidth / window.innerHeight;
     activeCam.updateProjectionMatrix();
     renderer.render(scene, activeCam);
 
     // PASS 2: Left Panel Live 3D CCTV Feeds
-    renderSubViewport(window.CarGuard.cameras.cam1, 'cam1-viewport', false);
-    renderSubViewport(window.CarGuard.cameras.cam2, 'cam2-viewport', false);
-    if (!realWebcamActive) {
-        renderSubViewport(window.CarGuard.cameras.cam3, 'cam3-viewport', false);
+    if (window.CarGuard && window.CarGuard.cameras) {
+        renderSubViewport(window.CarGuard.cameras.cam1, 'cam1-viewport', false);
+        renderSubViewport(window.CarGuard.cameras.cam2, 'cam2-viewport', false);
+        if (!realWebcamActive) {
+            renderSubViewport(window.CarGuard.cameras.cam3, 'cam3-viewport', false);
+        }
     }
 
-    window.CarGuard.fovCones.forEach(c => (c.visible = conesUserEnabled));
+    cones.forEach(c => (c.visible = conesUserEnabled));
 }
 
 function switchMainPOV(pov) {
@@ -130,15 +154,17 @@ function switchMainPOV(pov) {
 }
 
 function toggleFOVCones(checked) {
-    window.CarGuard.fovCones.forEach(c => (c.visible = checked));
+    if (window.CarGuard && window.CarGuard.fovCones) {
+        window.CarGuard.fovCones.forEach(c => (c.visible = checked));
+    }
 }
 
 function toggleRoofXray(checked) {
-    if (window.CarGuard.roofMesh) {
+    if (window.CarGuard?.roofMesh) {
         window.CarGuard.roofMesh.material.transparent = checked;
         window.CarGuard.roofMesh.material.opacity = checked ? 0.18 : 1.0;
     }
-    if (window.CarGuard.externalCarModel) {
+    if (window.CarGuard?.externalCarModel) {
         window.CarGuard.externalCarModel.traverse(function (child) {
             if (child.isMesh && child.material) {
                 const matName = (child.material.name || '').toLowerCase();
@@ -184,47 +210,69 @@ async function toggleRealWebcam() {
             videoEl.srcObject.getTracks().forEach(t => t.stop());
         }
         videoEl.classList.add('hidden');
+        document.getElementById('cam3-tamper-overlay')?.classList.add('hidden');
         realWebcamActive = false;
         btn.innerHTML = '<i class="fa-solid fa-camera"></i> Use Real Cam';
     }
 }
 
 function setSimulationScene(mode) {
-    document.querySelectorAll('footer button').forEach(b => b.classList.remove('mode-btn-active'));
-    const activeBtn = document.getElementById(`btn-${mode}`);
-    if (activeBtn) activeBtn.classList.add('mode-btn-active');
+    try {
+        document.querySelectorAll('footer button').forEach(b => b.classList.remove('mode-btn-active'));
+        const activeBtn = document.getElementById(`btn-${mode}`);
+        if (activeBtn) activeBtn.classList.add('mode-btn-active');
 
-    if (mode !== 'breakin' && window.Scene3Breakin && window.Scene3Breakin.sirenLight) {
-        window.Scene3Breakin.sirenLight.intensity = 0;
-    }
+        if (mode !== 'breakin' && window.Scene3Breakin && window.Scene3Breakin.sirenLight) {
+            window.Scene3Breakin.sirenLight.intensity = 0;
+        }
+        if (mode !== 'tamper' && window.Scene5Tamper && typeof window.Scene5Tamper.cleanup === 'function') {
+            window.Scene5Tamper.cleanup();
+        }
 
-    const sceneMap = {
-        standby: window.Scene1Standby,
-        loitering: window.Scene2Loitering,
-        breakin: window.Scene3Breakin,
-        cockpit: window.Scene4Cockpit
-    };
+        if (mode === 'standby' && window.CarGuard) {
+            window.CarAudio?.stopSiren();
+            if (window.CarGuard.rightWindowMesh) window.CarGuard.rightWindowMesh.visible = true;
+            if (window.CarGuard.leftWindowMesh) window.CarGuard.leftWindowMesh.visible = true;
+            if (window.Scene3Breakin?.shardsGroup) window.Scene3Breakin.shardsGroup.visible = false;
+            const opticsEl = document.getElementById('tel-optics');
+            if (opticsEl) {
+                opticsEl.innerText = 'CLEAR (LUX: 98%)';
+                opticsEl.className = 'text-emerald-400';
+            }
+        }
 
-    currentSceneController = sceneMap[mode];
-    if (currentSceneController && typeof currentSceneController.enter === 'function') {
-        currentSceneController.enter();
+        const sceneMap = {
+            standby: window.Scene1Standby,
+            loitering: window.Scene2Loitering,
+            breakin: window.Scene3Breakin,
+            tamper: window.Scene5Tamper,
+            cockpit: window.Scene4Cockpit
+        };
+
+        currentSceneController = sceneMap[mode];
+        if (currentSceneController && typeof currentSceneController.enter === 'function') {
+            currentSceneController.enter();
+        }
+    } catch (err) {
+        appendRawLog(`<span class="text-rose-400 font-bold">⚠️ [SCENE ERROR] ${err.message}</span>`);
     }
 }
 
-// Captures Fast 640x360 Compressed Snapshot + Accurate Live GPS
 async function dispatchWhatsAppSOS(title, details) {
     try {
         let snapshotBase64 = null;
         let photoSource = '3D CCTV Simulation';
         const videoEl = document.getElementById('real-webcam');
 
-        // 1. CAPTURE & DOWNSCALE TO 640x360 (~22 KB) FOR INSTANT UPLOAD
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = 640;
         tempCanvas.height = 360;
         const ctx = tempCanvas.getContext('2d');
 
-        if (realWebcamActive && videoEl && videoEl.readyState >= 2) {
+        if (window.Scene5Tamper && window.Scene5Tamper.preTamperSnapshot && title.includes('TAMPER')) {
+            snapshotBase64 = window.Scene5Tamper.preTamperSnapshot;
+            photoSource = 'Pre-Tamper Optical Cache';
+        } else if (realWebcamActive && videoEl && videoEl.readyState >= 2) {
             ctx.drawImage(videoEl, 0, 0, tempCanvas.width, tempCanvas.height);
             snapshotBase64 = tempCanvas.toDataURL('image/jpeg', 0.75);
             photoSource = 'Physical Laptop Webcam';
@@ -233,7 +281,6 @@ async function dispatchWhatsAppSOS(title, details) {
             snapshotBase64 = tempCanvas.toDataURL('image/jpeg', 0.75);
         }
 
-        // 2. FETCH LIVE BROWSER GPS & FILTER OUT MEERUT ISP GATEWAY DRIFT
         let lat = VERIFIED_USER_LAT;
         let lon = VERIFIED_USER_LON;
 
@@ -253,14 +300,11 @@ async function dispatchWhatsAppSOS(title, details) {
                     lat = rawLat;
                     lon = rawLon;
                 }
-            } catch (geoErr) {
-                // Uses verified coordinates (28.444916, 78.980528)
-            }
+            } catch (geoErr) {}
         }
 
         const gpsSource = `Live Browser GPS (${lat}, ${lon})`;
 
-        // 3. DISPATCH TO PYTHON FLASK SERVER
         const res = await fetch(WHATSAPP_API_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -306,6 +350,7 @@ function logTelegram(msg) {
 }
 
 function onWindowResize() {
+    if (!mainCamera || !renderer) return;
     mainCamera.aspect = window.innerWidth / window.innerHeight;
     mainCamera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -316,4 +361,8 @@ setInterval(() => {
     if (el) el.innerText = new Date().toTimeString().split(' ')[0];
 }, 1000);
 
-window.onload = initSimulation;
+if (document.readyState === 'complete') {
+    initSimulation();
+} else {
+    window.addEventListener('load', initSimulation);
+}

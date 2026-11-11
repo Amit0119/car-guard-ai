@@ -14,7 +14,6 @@ window.CarAudio = {
         }
     },
 
-    // 1. Biometric / PIN Beep
     playBeep: function (freq = 920, duration = 0.12, type = 'sine') {
         this.init();
         const osc = this.ctx.createOscillator();
@@ -29,7 +28,6 @@ window.CarAudio = {
         osc.stop(this.ctx.currentTime + duration);
     },
 
-    // 2. Mechanical Servo Motor Whir (When Red Flip-Guard Opens)
     playServoWhir: function () {
         this.init();
         const now = this.ctx.currentTime;
@@ -39,17 +37,14 @@ window.CarAudio = {
         osc.frequency.setValueAtTime(180, now);
         osc.frequency.linearRampToValueAtTime(460, now + 0.22);
         osc.frequency.linearRampToValueAtTime(320, now + 0.38);
-
         gain.gain.setValueAtTime(0.12, now);
         gain.gain.exponentialRampToValueAtTime(0.001, now + 0.40);
-
         osc.connect(gain);
         gain.connect(this.ctx.destination);
         osc.start(now);
         osc.stop(now + 0.40);
     },
 
-    // 3. 3D Glass Shatter Sound (Scene 3 Hammer Break-In)
     playGlassShatter: function () {
         this.init();
         const now = this.ctx.currentTime;
@@ -89,7 +84,6 @@ window.CarAudio = {
         });
     },
 
-    // 4. Police / SOS Alarm Siren (Scene 3)
     startSiren: function () {
         this.init();
         this.stopSiren();
@@ -122,7 +116,6 @@ window.CarAudio = {
         }
     },
 
-    // 5. Starter Crank + Porsche V8 Ignition Roar (Scene 4 Key Turn)
     playEngineStart: function () {
         this.init();
         const now = this.ctx.currentTime;
@@ -188,7 +181,6 @@ window.CarGuard = {
         cam2: null,
         cam3: null
     },
-    // Human GLB Character & Rigging State
     thiefGroup: null,
     thiefArmPivot: null,
     hammerGroup: null,
@@ -198,8 +190,8 @@ window.CarGuard = {
     humanActions: {},
     activeHumanAction: null,
     humanBones: {},
-    humanRole: 'thief',       // 'thief' (Red BBox + Hammer) or 'owner' (Driver Seat)
-    humanPose: 'standing',    // 'standing', 'walking', 'sitting'
+    humanRole: 'thief',
+    humanPose: 'standing',
     ownerReachAmount: 0,
     lastThiefPos: new THREE.Vector3(),
 
@@ -231,17 +223,14 @@ function buildCarAndOptics(scene) {
     window.CarGuard.interiorRigGroup = interiorRigGroup;
     carGroup.add(interiorRigGroup);
 
-    // 1. Build Fallback Outer Body + Initial Interior Rig
     createFallbackBody(carGroup);
     rebuildCalibrationRig();
 
-    // 2. Load Real 3D Car Model ('assets/car.glb')
     const loader = new THREE.GLTFLoader();
     loader.load(
         'assets/car.glb',
         function (gltf) {
             const rawCar = gltf.scene;
-
             if (window.CarGuard.fallbackBodyGroup) {
                 window.CarGuard.fallbackBodyGroup.visible = false;
             }
@@ -292,13 +281,8 @@ function buildCarAndOptics(scene) {
         }
     );
 
-    // 3. Create & Load Real .GLB Human Character ('assets/human.glb' with CDN fallback)
     createSuspectModel(scene);
-
-    // 4. Inject Live 3D Camera & Key Safe Calibration UI
     injectCalibrationUI();
-
-    // 5. Start 60FPS Skeleton & Animation Mixer Loop for the .GLB Human
     startHumanAnimationLoop();
 }
 
@@ -389,7 +373,6 @@ function rebuildCalibrationRig() {
     const frontWindowZ = 0.40;
     const windowCenterY = H * 0.72;
 
-    // Right & Left Front Window Planes (for Scene 3 Dual-Window Break-In Shatter)
     const glassMatRight = new THREE.MeshPhysicalMaterial({
         color: 0x38bdf8, transparent: true, opacity: 0.24, roughness: 0.1, side: THREE.DoubleSide
     });
@@ -416,7 +399,6 @@ function rebuildCalibrationRig() {
     podLight.position.set(keySafeX, keySafeY + 0.15, keySafeZ - 0.20);
     rigGroup.add(podLight);
 
-    // --- OEM SUPERCAR IGNITION POD ---
     const ignitionModuleGroup = new THREE.Group();
     ignitionModuleGroup.position.set(keySafeX, keySafeY, keySafeZ);
     ignitionModuleGroup.rotation.x = -0.22;
@@ -509,7 +491,6 @@ function rebuildCalibrationRig() {
     window.CarGuard.keyMesh = keyMeshGroup;
     ignitionModuleGroup.add(keyMeshGroup);
 
-    // 7. 3D PORSCHE FRONT LED HEADLIGHTS & VOLUMETRIC BEAMS
     const headlightsGroup = new THREE.Group();
     headlightsGroup.visible = false;
     window.CarGuard.headlightsGroup = headlightsGroup;
@@ -545,7 +526,6 @@ function rebuildCalibrationRig() {
     roadLight.position.set(0, H * 0.55, hl * 1.45);
     headlightsGroup.add(roadLight);
 
-    // --- MOUNT ALL 3 CAMERAS ---
     function createCameraMesh(lensColorHex) {
         const camBody = new THREE.Group();
         const housing = new THREE.Mesh(
@@ -599,7 +579,6 @@ function rebuildCalibrationRig() {
     window.CarGuard.cameras.cam3 = cam3;
     rigGroup.add(cam3);
 
-    // --- 3D FOV CONES ---
     const coneLength = 2.45;
     const sideConeGeo = new THREE.ConeGeometry(0.35, coneLength, 24, 1, true);
     sideConeGeo.translate(0, -coneLength / 2, 0);
@@ -636,7 +615,6 @@ function rebuildCalibrationRig() {
     window.CarGuard.fovCones.push(fovCone1, fovCone2, fovCone3);
 }
 
-// LOADS REAL RIGGED .GLB HUMAN CHARACTER ('assets/human.glb' OR THREE.JS CDN) AT EXACT 1.65M SCALE
 function createSuspectModel(scene) {
     const thief = new THREE.Group();
 
@@ -644,7 +622,6 @@ function createSuspectModel(scene) {
     charLight.position.set(0, 1.9, 0.6);
     thief.add(charLight);
 
-    // 1. Procedural Fallback Group (Hidden immediately once human.glb loads)
     const fallbackHuman = new THREE.Group();
     const hoodieMat = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.5 });
     const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.18, 1.0, 14), hoodieMat);
@@ -654,13 +631,11 @@ function createSuspectModel(scene) {
     fallbackHuman.add(torso, head);
     thief.add(fallbackHuman);
 
-    // 2. Virtual Arm Pivot Controller (Scene 3 animates thiefArmPivot.rotation.x for Hammer Swing)
     const rightArmPivot = new THREE.Group();
     rightArmPivot.position.set(-0.20, 1.32, 0.0);
     rightArmPivot.rotation.x = -0.45;
     thief.add(rightArmPivot);
 
-    // 3. 3D Iron Sledgehammer / Window Breaker Tool
     const hammerGroup = new THREE.Group();
     hammerGroup.position.set(-0.22, 1.05, 0.25);
 
@@ -683,7 +658,6 @@ function createSuspectModel(scene) {
 
     thief.add(hammerGroup);
 
-    // 4. Red YOLOv8 3D Bounding Box Wireframe
     const bbox = new THREE.LineSegments(
         new THREE.EdgesGeometry(new THREE.BoxGeometry(0.75, 1.78, 0.75)),
         new THREE.LineBasicMaterial({ color: 0xff0044 })
@@ -701,7 +675,6 @@ function createSuspectModel(scene) {
     window.CarGuard.suspectBBox = bbox;
     scene.add(thief);
 
-    // 5. Load Real Articulated .GLB Human Character
     const loader = new THREE.GLTFLoader();
 
     function onHumanLoaded(gltf) {
