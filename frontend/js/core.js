@@ -4,6 +4,7 @@ let currentSceneController = null;
 let realWebcamActive = false;
 
 const WHATSAPP_API_URL = 'http://127.0.0.1:5000/api/whatsapp-alert';
+const POLL_COMMANDS_URL = 'http://127.0.0.1:5000/api/poll-commands';
 const VERIFIED_USER_LAT = 28.444916;
 const VERIFIED_USER_LON = 78.980528;
 
@@ -72,6 +73,9 @@ function initSimulation() {
     if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(() => {}, () => {}, { timeout: 3000 });
     }
+
+    // Start 2-Way WhatsApp Remote Command Listener Poll
+    startTwoWayCommandPolling();
 }
 
 function renderSubViewport(cam, domElementId, showCones) {
@@ -259,6 +263,114 @@ function setSimulationScene(mode) {
         }
     } catch (err) {
         appendRawLog(`<span class="text-rose-400 font-bold">⚠️ [SCENE ERROR] ${err.message}</span>`);
+    }
+}
+
+// 2-WAY WHATSAPP REMOTE COMMAND EXECUTOR (SNAP, LOCK, SIREN, RESET)
+function startTwoWayCommandPolling() {
+    setInterval(async () => {
+        try {
+            const res = await fetch(POLL_COMMANDS_URL);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.ok && Array.isArray(data.commands)) {
+                for (const item of data.commands) {
+                    await executeRemoteWhatsAppCommand(item.command, item.source || 'WhatsApp Mobile');
+                }
+            }
+        } catch (e) {}
+    }, 2000);
+}
+
+function triggerRemoteCommand(cmd) {
+    executeRemoteWhatsAppCommand(cmd, '2-Way WhatsApp Command');
+}
+
+async function executeRemoteWhatsAppCommand(rawCmd, sourceLabel) {
+    const cmd = String(rawCmd || '').trim().toUpperCase();
+    if (!cmd) return;
+
+    if (cmd === 'SNAP' || cmd === 'STATUS') {
+        window.CarAudio?.playBeep(1180, 0.12, 'sine');
+        appendRawLog(`<span class="text-cyan-300 font-bold">📥 [2-WAY RX: "${cmd}"] From ${sourceLabel} -> Waking CAM-03 Real Webcam & capturing live frame...</span>`);
+
+        // Automatically open Real Laptop Webcam if it is currently off
+        if (!realWebcamActive) {
+            await toggleRealWebcam();
+            // Wait 650ms for webcam hardware auto-exposure to warm up so frame is crystal clear
+            await new Promise(r => setTimeout(r, 650));
+        }
+
+        const statusText = document.getElementById('system-status-text')?.innerText || 'STANDBY ARMED';
+        const glassText = document.getElementById('tel-glass')?.innerText || 'NORMAL';
+        const imuText = document.getElementById('tel-imu')?.innerText || 'LEVEL';
+        const shieldText = document.getElementById('tel-shield')?.innerText || 'LOCKED';
+
+        await dispatchWhatsAppSOS(
+            `2-WAY REMOTE LIVE WEBCAM SNAPSHOT (${cmd})`,
+            `Owner requested live CAM-03 webcam & telemetry check. State: ${statusText} | Glass: ${glassText} | IMU: ${imuText} | Shield: ${shieldText}`
+        );
+    } else if (cmd === 'LOCK') {
+        window.CarAudio?.playBeep(340, 0.25, 'sawtooth');
+        window.CarAudio?.playServoWhir();
+
+        if (window.CarGuard?.servoShieldMesh) {
+            window.CarGuard.servoShieldMesh.rotation.x = 0;
+        }
+        if (window.CarGuard?.headlightsGroup) {
+            window.CarGuard.headlightsGroup.visible = false;
+        }
+        if (window.CarGuard?.keyMesh) {
+            window.CarGuard.keyMesh.visible = false;
+        }
+        if (window.Scene4Cockpit) {
+            window.Scene4Cockpit.priorThreatDetected = true;
+            window.Scene4Cockpit.shieldUnlocked = false;
+            window.Scene4Cockpit.engineStarted = false;
+            window.Scene4Cockpit.targetShieldAngle = 0;
+        }
+
+        document.getElementById('start-engine-box')?.classList.add('hidden');
+        document.getElementById('status-dot').className = 'w-3 h-3 rounded-full bg-rose-500 animate-ping';
+        document.getElementById('system-status-text').innerText = 'REMOTE DEADLOCK: 3-OF-3 STRICT MFA';
+        document.getElementById('system-badge').className = 'flex items-center space-x-1.5 text-rose-400 font-bold';
+
+        const shieldEl = document.getElementById('tel-shield');
+        if (shieldEl) {
+            shieldEl.innerHTML = '<i class="fa-solid fa-lock mr-1"></i>REMOTE DEADLOCK (3-OF-3 MFA)';
+            shieldEl.className = 'text-rose-400 font-bold animate-pulse';
+        }
+
+        appendRawLog(`<span class="text-rose-400 font-bold">🔒 [2-WAY RX: "LOCK"] Immobilizer Deadlocked & Servo Flip-Guard closed!</span>`);
+        await dispatchWhatsAppSOS(
+            '2-WAY REMOTE DEADLOCK ENGAGED (LOCK)',
+            'Owner remotely locked vehicle via WhatsApp. Ignition cut, Servo Flip-Guard closed & 3-of-3 Strict Biometric MFA enforced!'
+        );
+    } else if (cmd === 'SIREN') {
+        window.CarAudio?.startSiren();
+        if (window.Scene3Breakin?.sirenLight) {
+            window.Scene3Breakin.sirenLight.intensity = 2.8;
+        }
+        document.getElementById('telegram-panel')?.classList.add('alarm-flash');
+        document.getElementById('status-dot').className = 'w-3 h-3 rounded-full bg-amber-400 animate-ping';
+        document.getElementById('system-status-text').innerText = 'REMOTE PANIC SIREN ACTIVE!';
+
+        appendRawLog(`<span class="text-amber-300 font-bold">🚨 [2-WAY RX: "SIREN"] Remote acoustic deterrent & police strobe activated!</span>`);
+        await dispatchWhatsAppSOS(
+            '2-WAY REMOTE PANIC SIREN ACTIVATED',
+            'Owner remotely triggered 110dB acoustic siren & strobe deterrent via WhatsApp command.'
+        );
+    } else if (cmd === 'RESET') {
+        window.CarAudio?.stopSiren();
+        window.CarAudio?.playBeep(960, 0.14, 'sine');
+        document.getElementById('telegram-panel')?.classList.remove('alarm-flash');
+        setSimulationScene('standby');
+
+        appendRawLog(`<span class="text-emerald-400 font-bold">🔄 [2-WAY RX: "RESET"] Siren silenced & all sensors restored to Standby Armed.</span>`);
+        await dispatchWhatsAppSOS(
+            '2-WAY SYSTEM RESET TO STANDBY (RESET)',
+            'Owner remotely silenced alarms and restored vehicle to Scene 1: Standby Surveillance.'
+        );
     }
 }
 
