@@ -1,10 +1,15 @@
 import base64
 import threading
+import time
 import cv2
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from telegram_bot import send_whatsapp_alert
+from telegram_bot import (
+    send_whatsapp_alert,
+    poll_whatsapp_incoming_command,
+    configure_greenapi_webhooks
+)
 from ear_liveness import process_liveness_frame, enroll_owner_face, reset_liveness_session
 
 app = Flask(__name__)
@@ -13,6 +18,33 @@ CORS(app)
 # Stores the last clear webcam frame before a cloth/hand covers the camera
 LAST_CLEAR_FRAME = None
 TAMPER_STREAK = 0
+
+# Queue of 2-Way WhatsApp Remote Commands waiting for the 3D frontend to execute
+COMMAND_QUEUE = []
+QUEUE_LOCK = threading.Lock()
+POLL_THREAD_STARTED = False
+
+
+def background_whatsapp_listener():
+    """Continuously checks Green-API for incoming WhatsApp commands from the owner's phone."""
+    configure_greenapi_webhooks()
+    while True:
+        cmd = poll_whatsapp_incoming_command()
+        if cmd:
+            with QUEUE_LOCK:
+                COMMAND_QUEUE.append({
+                    "command": cmd,
+                    "source": "WhatsApp Mobile Chat"
+                })
+        time.sleep(2.8)
+
+
+def ensure_listener_started():
+    global POLL_THREAD_STARTED
+    if not POLL_THREAD_STARTED:
+        POLL_THREAD_STARTED = True
+        t = threading.Thread(target=background_whatsapp_listener, daemon=True)
+        t.start()
 
 
 def analyze_optical_tamper(image_base64):
@@ -30,7 +62,6 @@ def analyze_optical_tamper(image_base64):
         pixel_std = float(np.std(gray))
         edge_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
-        # Covered lens = very dark (mean_lux < 34) OR flat featureless cloth/palm blur (pixel_std < 18 and edge_var < 14)
         is_occluded = (mean_lux < 34.0) or (pixel_std < 18.0 and edge_var < 14.0)
 
         if is_occluded:
@@ -47,14 +78,16 @@ def analyze_optical_tamper(image_base64):
 @app.route("/", methods=["GET"])
 @app.route("/api/health", methods=["GET"])
 def health():
+    ensure_listener_started()
     return jsonify({
         "status": "online",
-        "service": "Car-Guard-AI Telemetry & Biometric Security Server"
+        "service": "Car-Guard-AI Telemetry, Biometric & 2-Way WhatsApp Command Server"
     })
 
 
 @app.route("/api/whatsapp-alert", methods=["POST"])
 def trigger_alert():
+    ensure_listener_started()
     data = request.get_json(force=True) or {}
     event_title = data.get("title", "SECURITY BREACH DETECTED")
     details = data.get("details", "Suspicious activity detected around vehicle perimeter.")
@@ -73,6 +106,32 @@ def trigger_alert():
         "ok": True,
         "message": "WhatsApp Cloud SOS, Snapshot & GPS telemetry dispatched."
     })
+
+
+@app.route("/api/poll-commands", methods=["GET"])
+def get_pending_commands():
+    """Frontend polls this endpoint every 2s to execute any queued 2-Way WhatsApp commands."""
+    ensure_listener_started()
+    with QUEUE_LOCK:
+        items = list(COMMAND_QUEUE)
+        COMMAND_QUEUE.clear()
+    return jsonify({"ok": True, "commands": items})
+
+
+@app.route("/api/remote-command", methods=["POST"])
+def trigger_remote_command():
+    """Allows triggering a 2-Way WhatsApp Command from the HUD or an external webhook."""
+    ensure_listener_started()
+    data = request.get_json(force=True) or {}
+    cmd = str(data.get("command", "")).strip().upper()
+    source = data.get("source", "2-Way WhatsApp Cloud")
+    if not cmd:
+        return jsonify({"ok": False, "error": "No command specified"}), 400
+
+    with QUEUE_LOCK:
+        COMMAND_QUEUE.append({"command": cmd, "source": source})
+
+    return jsonify({"ok": True, "command": cmd})
 
 
 @app.route("/api/liveness-check", methods=["POST"])
@@ -117,5 +176,6 @@ def reset_liveness():
 
 
 if __name__ == "__main__":
-    print("CAR-GUARD-AI Telemetry & Biometric Server running on http://127.0.0.1:5000")
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    ensure_listener_started()
+    print("CAR-GUARD-AI Telemetry, Biometric & 2-Way WhatsApp Server running on http://127.0.0.1:5000")
+    app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)

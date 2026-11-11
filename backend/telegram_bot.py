@@ -12,6 +12,22 @@ OWNER_WHATSAPP = "919258121879"
 DEFAULT_LAT = 28.444916
 DEFAULT_LON = 78.980528
 
+VALID_COMMANDS = {"SNAP", "PHOTO", "LOCK", "SIREN", "RESET", "STATUS"}
+
+
+def configure_greenapi_webhooks():
+    """Enables incoming & self-chat message notifications on Green-API instance startup."""
+    try:
+        url = f"{API_HOST}/waInstance{ID_INSTANCE}/setSettings/{API_TOKEN_INSTANCE}"
+        payload = {
+            "incomingWebhook": "yes",
+            "outgoingMessageWebhook": "yes",
+            "outgoingAPIMessageWebhook": "no"
+        }
+        requests.post(url, json=payload, timeout=6)
+    except Exception:
+        pass
+
 
 def compress_image_for_fast_upload(raw_bytes):
     """Downscales large 4K/1080p snapshots to 640px width (~22 KB) so upload finishes in <1s."""
@@ -44,10 +60,9 @@ def send_whatsapp_alert(event_title, details, image_base64=None, lat=DEFAULT_LAT
         f"📌 *Event:* {event_title}\n"
         f"🛡️ *Telemetry:* {details}\n"
         f"📍 *Live GPS Location:* {maps_url}\n\n"
-        f"_Automated Zero-Trust Vehicle Defense System_"
+        f"💬 _Reply *SNAP*, *LOCK*, *SIREN*, or *RESET* for 2-Way Control_"
     )
 
-    # 1. Try sending compressed snapshot + caption (with automatic 2-attempt retry)
     if image_base64:
         try:
             if "," in image_base64:
@@ -76,7 +91,6 @@ def send_whatsapp_alert(event_title, details, image_base64=None, lat=DEFAULT_LAT
         except Exception as e:
             print(f"[WHATSAPP IMAGE PREP ERROR] {e}")
 
-    # 2. Instant Text Alert Fallback (if no image or if image upload timed out on slow network)
     try:
         url = f"{API_HOST}/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN_INSTANCE}"
         payload = {
@@ -89,3 +103,50 @@ def send_whatsapp_alert(event_title, details, image_base64=None, lat=DEFAULT_LAT
     except Exception as e:
         print(f"[WHATSAPP ERROR] Alert failed: {e}")
         return False
+
+
+def poll_whatsapp_incoming_command():
+    """Polls Green-API notification queue for 2-Way owner commands (SNAP, LOCK, SIREN, RESET)."""
+    recv_url = f"{API_HOST}/waInstance{ID_INSTANCE}/receiveNotification/{API_TOKEN_INSTANCE}"
+    try:
+        res = requests.get(recv_url, timeout=5)
+        if not res.ok or not res.text or res.text == "null":
+            return None
+
+        data = res.json()
+        if not data or "receiptId" not in data:
+            return None
+
+        receipt_id = data["receiptId"]
+        body = data.get("body", {})
+        webhook_type = body.get("typeWebhook", "")
+
+        # Always delete the notification receipt from Green-API queue so it never repeats
+        del_url = f"{API_HOST}/waInstance{ID_INSTANCE}/deleteNotification/{API_TOKEN_INSTANCE}/{receipt_id}"
+        try:
+            requests.delete(del_url, timeout=4)
+        except Exception:
+            pass
+
+        # Ignore messages sent by the API itself; only accept human-typed messages
+        if webhook_type not in ("incomingMessageReceived", "outgoingMessageReceived"):
+            return None
+
+        msg_data = body.get("messageData", {})
+        text = ""
+        if "textMessageData" in msg_data:
+            text = msg_data["textMessageData"].get("textMessage", "")
+        elif "extendedTextMessageData" in msg_data:
+            text = msg_data["extendedTextMessageData"].get("text", "")
+
+        clean_cmd = text.strip().lstrip("/").upper()
+        if clean_cmd == "PHOTO":
+            clean_cmd = "SNAP"
+
+        if clean_cmd in VALID_COMMANDS:
+            print(f"[2-WAY WHATSAPP COMMAND RECEIVED] Command: {clean_cmd}")
+            return clean_cmd
+
+    except Exception:
+        pass
+    return None
