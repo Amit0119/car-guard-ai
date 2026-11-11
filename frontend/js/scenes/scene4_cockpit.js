@@ -1,4 +1,4 @@
-// SCENE 4: ZERO-TRUST COCKPIT HMI (DIRECT SEATED 3D DRIVER + PERSISTENT 3-OF-3 LOCK)
+// SCENE 4 (BUTTON 5): ZERO-TRUST COCKPIT HMI (DIRECT SEATED 3D DRIVER + PERSISTENT 3-OF-3 LOCK)
 window.Scene4Cockpit = {
     blinkVerified: false,
     fingerVerified: false,
@@ -13,30 +13,35 @@ window.Scene4Cockpit = {
     pollBusy: false,
     intruderFrames: 0,
     intruderAlertSent: false,
+    tamperAlertSent: false,
 
     fpHoldInterval: null,
     fpHoldProgress: 0,
 
     enter: function () {
         if (window.Scene2Loitering) window.Scene2Loitering.cleanup();
+        if (window.Scene5Tamper) window.Scene5Tamper.cleanup();
         window.CarAudio?.stopSiren();
         this.stopLivenessPolling();
         this.cancelFingerprintHold();
 
         if (window.CarGuard.carGroup) window.CarGuard.carGroup.rotation.y = 0;
 
-        // Check system status AND glass/radar telemetry so 3-of-3 High-Alert Lock never resets on repeated Scene 4 clicks
+        // Check system status, glass, radar AND optical tamper so 3-of-3 High-Alert Lock stays active after any breach
         const currentStatus = document.getElementById('system-status-text')?.innerText || '';
         const glassStatus = document.getElementById('tel-glass')?.innerText || '';
         const radarStatus = document.getElementById('tel-radar')?.innerText || '';
+        const opticsStatus = document.getElementById('tel-optics')?.innerText || '';
 
         if (
             currentStatus.includes('LOITERING') ||
             currentStatus.includes('BREAK-IN') ||
+            currentStatus.includes('TAMPER') ||
             currentStatus.includes('SOS') ||
             currentStatus.includes('HIGH-ALERT') ||
             glassStatus.includes('SHATTERED') ||
-            radarStatus.includes('INTRUSION')
+            radarStatus.includes('INTRUSION') ||
+            opticsStatus.includes('BLINDED')
         ) {
             this.priorThreatDetected = true;
         } else {
@@ -61,13 +66,14 @@ window.Scene4Cockpit = {
         this.targetShieldAngle = 0;
         this.intruderFrames = 0;
         this.intruderAlertSent = false;
+        this.tamperAlertSent = false;
         window.CarGuard.ownerReachAmount = 0;
 
-        // Place .GLB Human directly seated inside the Driver Seat (no walking through closed doors)
+        // Place .GLB Human directly seated inside the Driver Seat
         if (window.CarGuard.thiefGroup) {
             window.CarGuard.thiefGroup.position.set(0.36, -0.22, -0.02);
             window.CarGuard.thiefGroup.rotation.y = 0;
-            window.CarGuard.thiefGroup.visible = false; // Hidden in cockpit POV, visible in 3D Orbit POV
+            window.CarGuard.thiefGroup.visible = false;
         }
         if (typeof window.setHumanCharacterState === 'function') {
             window.setHumanCharacterState('owner', 'sitting');
@@ -111,7 +117,7 @@ window.Scene4Cockpit = {
         this.startLivenessPolling();
 
         if (this.priorThreatDetected) {
-            logTelegram('⚠️ [HIGH-ALERT PROTOCOL] Prior perimeter breach logged. All 3 factors (3-of-3) required.');
+            logTelegram('⚠️ [HIGH-ALERT PROTOCOL] Prior perimeter/optical breach logged. All 3 factors (3-of-3) required.');
         } else {
             logTelegram('⚡ [ADAPTIVE AUTH] Standard entry: Verify any 2 of 3 factors to disengage immobilizer.');
         }
@@ -324,6 +330,30 @@ window.Scene4Cockpit = {
                 const btnLbl = document.getElementById('btn-enroll-label');
                 if (btnLbl && data.owner_enrolled) {
                     btnLbl.innerText = 'ID Locked (Update)';
+                }
+
+                // Check if physical laptop webcam is covered by hand/cloth during Cockpit Auth
+                if (data.camera_tampered) {
+                    document.getElementById('cam3-tamper-overlay')?.classList.remove('hidden');
+                    lbl.className = 'text-[10px] text-rose-400 font-bold mono animate-pulse';
+                    if (badge) {
+                        badge.innerHTML = '<i class="fa-solid fa-hand mr-1"></i>Tampered';
+                        badge.className = 'px-2.5 py-1 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold mono';
+                    }
+                    if (!this.tamperAlertSent) {
+                        this.tamperAlertSent = true;
+                        window.CarAudio?.playBeep(250, 0.35, 'sawtooth');
+                        logTelegram(`🚨 [CAM-03 TAMPER SOS] Physical webcam covered (Lux: ${data.mean_lux})! Escalating to 3-of-3 Lock & sending pre-tamper frame...`);
+                        if (typeof dispatchWhatsAppSOS === 'function') {
+                            dispatchWhatsAppSOS(
+                                'COCKPIT WEBCAM CLOTH / HAND TAMPER SOS',
+                                `CAM-03 optical lens blinded (Lux: ${data.mean_lux}, Var: ${data.pixel_std}). Immobilizer locked!`
+                            );
+                        }
+                    }
+                    return;
+                } else {
+                    document.getElementById('cam3-tamper-overlay')?.classList.add('hidden');
                 }
 
                 const earEl = document.getElementById('ear-val');
@@ -557,7 +587,6 @@ window.Scene4Cockpit = {
     },
 
     update: function () {
-        // Show the seated 3D driver when viewing from outside (3D Orbit), hide in Cockpit POV so it never blocks CAM-03
         const driver = window.CarGuard.thiefGroup;
         if (driver) {
             driver.visible = (activeMainPOV !== 'cockpit');
